@@ -52,12 +52,8 @@ const ModelSettingsSchema = z.object({
   summary: SummarySchema.default('auto'),
 })
 
-function routeKeyOf(provider: unknown, model: unknown): string {
-  return `${String(provider ?? '')}\u0000${String(model ?? '')}`
-}
-
 export function routeKey(route: RequestRoute): string {
-  return routeKeyOf(route.provider, route.model)
+  return `${route.provider}\u0000${route.model}`
 }
 
 const configSchema = z.transform(
@@ -379,7 +375,6 @@ function createRequestTracker(getSettings: () => Map<string, ReasoningSelection>
 const FETCH_STATE_KEY = Symbol.for('deepseek-harness.reasoning-mode.fetch-state')
 
 interface FetchState {
-  wrapper: FetchLike
   restore: () => void
 }
 
@@ -448,7 +443,6 @@ function installFetchWrapper(
 
   host.fetch = wrapper
   const state: FetchState = {
-    wrapper,
     restore: () => {
       if (host.fetch === wrapper) host.fetch = original
       if (host[FETCH_STATE_KEY] === state) delete host[FETCH_STATE_KEY]

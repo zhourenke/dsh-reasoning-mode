@@ -95,7 +95,7 @@ Get-Item "$prof\node_modules\@zhourenke\dsh-reasoning-mode" -Force | Select-Obje
 | 字面量 | 宿主侧 | 浏览器侧 |
 |---|---|---|
 | 设置 namespace | `SETTINGS_NAMESPACE = 'reasoning-mode'` | `const NS = 'reasoning-mode'`（同时是 `settings.plugin.item` 的 `key` 与 `locale` 命名空间） |
-| 路由键分隔符 | `routeKeyOf()` 里的 `\u0000` | `keyOf()` 里的同一个字符 |
+| 路由键分隔符 | `routeKey()` 里的 `\u0000` | `keyOf()` 里的同一个字符 |
 | 模式取值 | `'standard' \| 'pro'` | 同名联合类型 |
 | 摘要取值 | `'auto' \| 'concise' \| 'detailed'` | 同名联合类型 |
 | 亲和头 | `x-client-request-id` → `session_id` | （不由浏览器侧读取） |
