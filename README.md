@@ -4,7 +4,7 @@
 
 **给选定的 provider/model 指定 Responses 请求的推理模式与摘要等级。**
 
-DSH 自己有 adapter 提供的 `reasoningEffort`（每个模型可选的推理档位），但 Responses 请求体里的 `reasoning.mode`（Standard / Pro）与 `reasoning.summary`（Auto / Concise / Detailed）没有逐路由入口。本插件补上这一层：**只改写你勾选的路由**，其它请求原样通过。
+DSH 自带 adapter 提供的 `reasoningEffort`（每个模型的推理档位），但 Responses 请求体里的 `reasoning.mode`（Standard / Pro）与 `reasoning.summary`（Auto / Concise / Detailed）没有逐路由入口；本插件补上这一层：**只改写你勾选的路由**，其它请求原样通过。
 
 ## 它解决什么问题
 

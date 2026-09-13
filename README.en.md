@@ -4,11 +4,11 @@
 
 **Set the reasoning mode and summary level of Responses requests for chosen provider/model routes.**
 
-DSH has its own adapter-provided `reasoningEffort` (the selectable effort per model), but the Responses body fields `reasoning.mode` (Standard / Pro) and `reasoning.summary` (Auto / Concise / Detailed) have no per-route entry point. This plugin adds one: it rewrites **only the routes you check** and forwards every other request untouched.
+DSH has its own adapter-provided `reasoningEffort` (the effort of each model), but the Responses body fields `reasoning.mode` (Standard / Pro) and `reasoning.summary` (Auto / Concise / Detailed) have no per-route entry point; this plugin adds one: it rewrites **only the routes you check** and forwards every other request untouched.
 
 ## What it solves
 
-- **Per-route reasoning strength**: the same model under different providers does not affect the others.
+- **Per-route reasoning strength**: routes stay independent even when the same model appears under several providers.
 - **Adjustable summary level**: `Auto` lets the model decide, `Concise` / `Detailed` force it shorter or longer.
 - **Removable at any time**: it installs as a profile layer and never modifies DSH itself; clearing the checks turns it off completely.
 
@@ -50,7 +50,7 @@ reasoning-mode:
       summary: detailed
 ```
 
-An entry with a mistyped id raises no error, it simply never applies (checking boxes in the settings card avoids typos).
+An entry with a mistyped id raises no error; it simply never applies (checking boxes in the settings card avoids typos).
 
 Configuration applies as soon as it is saved.
 
