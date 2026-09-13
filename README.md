@@ -22,7 +22,7 @@ DSH 自带 adapter 提供的 `reasoningEffort`（每个模型的推理档位）�
 dsh plugin --profile web add "github:zhourenke/dsh-reasoning-mode"
 ```
 
-安装后需要**重启 DSH 并刷新页面**，然后在模型选择器右侧可以看到本插件的选择标签，在 **设置 → 插件 → 推理模式** 可以看到本插件的设置卡片。
+安装后需要**重启 DSH 并刷新页面**，在 **设置 → 插件 → 推理模式** 可以看到本插件的设置卡片。
 
 卸载：
 

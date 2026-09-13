@@ -22,7 +22,7 @@ GPT models that speak the OpenAI Responses protocol. Models on Chat Completions,
 dsh plugin --profile web add "github:zhourenke/dsh-reasoning-mode"
 ```
 
-After installing, **restart DSH and refresh the page**: the plugin's selection label then appears to the right of the model selector, and its settings card appears under **Settings → Plugins → Reasoning mode**.
+After installing, **restart DSH and refresh the page**; the plugin's settings card appears under **Settings → Plugins → Reasoning mode**.
 
 Uninstall:
 
