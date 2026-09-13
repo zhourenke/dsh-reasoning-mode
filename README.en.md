@@ -28,7 +28,7 @@ $dshHome = $env:DSH_HOME; if (-not $dshHome) { $dshHome = "$env:USERPROFILE\.dsh
 Select-String -Path "$dshHome\profiles\web\package.json" -Pattern 'dsh-reasoning-mode'
 ```
 
-Any output (one entry in `dependencies` and one in `dsh.profile.bundles`) means it is installed.
+Any output means it is installed as a profile layer (one entry in `dsh.profile.bundles`; a normal `dsh plugin add` install also adds one under `dependencies`, while a development junction mount only has the former).
 
 ## Installation
 

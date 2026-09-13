@@ -28,7 +28,7 @@ $dshHome = $env:DSH_HOME; if (-not $dshHome) { $dshHome = "$env:USERPROFILE\.dsh
 Select-String -Path "$dshHome\profiles\web\package.json" -Pattern 'dsh-reasoning-mode'
 ```
 
-有输出（`dependencies` 与 `dsh.profile.bundles` 里各一条）就说明装上了。
+有输出就说明已经装进 profile 层（`dsh.profile.bundles` 里一条；用 `dsh plugin add` 正常安装时 `dependencies` 里也会有一条，开发期用目录连接点挂载的则只有前者）。
 
 ## 安装
 
