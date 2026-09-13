@@ -256,3 +256,34 @@ test('can be concatenated with the sibling reasoning-summary client bundle', () 
   const summaryBundle = readFileSync(new URL('../../dsh-reasoning-summary/lib/client.js', import.meta.url), 'utf8')
   assert.doesNotThrow(() => new vm.Script(`${summaryBundle}\n${modeBundle}`))
 })
+
+test('injects the stylesheet once and never replaces an existing one', () => {
+  const { require } = makeRequire()
+  const plugin = definition.factory(require)
+  const created = []
+  globalThis.document = {
+    querySelector: () => undefined,
+    createElement: () => ({ dataset: {}, textContent: '' }),
+    head: { appendChild: (node) => created.push(node) },
+  }
+  try {
+    plugin.apply(makeCtx().ctx)
+    assert.equal(created.length, 1)
+    assert.equal(created[0].dataset.pluginCss, 'reasoning-mode')
+    assert.match(created[0].textContent, /\.rm-card/)
+
+    // A second activation must not duplicate the stylesheet.
+    globalThis.document.querySelector = () => ({})
+    plugin.apply(makeCtx().ctx)
+    assert.equal(created.length, 1)
+  } finally {
+    delete globalThis.document
+  }
+})
+
+test('apply stays inert when the required client services are absent', () => {
+  const { require, elements } = makeRequire()
+  const plugin = definition.factory(require)
+  plugin.apply({ effect: () => {}, get: () => undefined })
+  assert.equal(elements.length, 0)
+})
