@@ -1,3 +1,15 @@
+/**
+ * @zhourenke/dsh-reasoning-mode
+ *
+ * Configures the `reasoning.mode` and `reasoning.summary` fields of OpenAI
+ * Responses requests for explicitly enabled provider/model routes. The host
+ * half owns the durable model selection (a settings namespace limited to
+ * `models`) and wraps the final Host `fetch` boundary, associating each
+ * request with the exact provider/model observed through Responses session
+ * affinity. The browser half (src/client.ts) provides the checkbox-only
+ * settings card and the composer control in `conversation.input.right`.
+ */
+
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-settings'
@@ -17,8 +29,6 @@ export interface ModelSettings {
 }
 
 export interface ReasoningModeConfig {
-  defaultMode: ReasoningMode
-  defaultSummary: ReasoningSummary
   /** Presence in this list means the exact provider/model route is enabled. */
   models: ModelSettings[]
 }
@@ -52,8 +62,6 @@ export function routeKey(route: RequestRoute): string {
 
 const configSchema = z.transform(
   z.object({
-    defaultMode: ModeSchema.default('standard'),
-    defaultSummary: SummarySchema.default('auto'),
     models: z.array(ModelSettingsSchema).default([]),
   }),
   (value) => {
@@ -73,14 +81,10 @@ const configSchema = z.transform(
         summary: model.summary === 'auto' || model.summary === 'concise' || model.summary === 'detailed' ? model.summary : 'auto',
       })
     }
-    return {
-      defaultMode: value.defaultMode,
-      defaultSummary: value.defaultSummary,
-      models,
-    }
+    return { models }
   },
   true,
-).default({ defaultMode: 'standard', defaultSummary: 'auto', models: [] })
+).default({ models: [] })
 
 // Keep the public declaration independent of schemastery's internal generic path.
 export const Config = configSchema as unknown as ReturnType<typeof z.any>
@@ -461,8 +465,6 @@ export const inject = ['settings']
 export function apply(ctx: Context): void {
   const settings = ctx.settings
   let current: ReasoningModeConfig = {
-    defaultMode: 'standard',
-    defaultSummary: 'auto',
     models: [],
   }
 

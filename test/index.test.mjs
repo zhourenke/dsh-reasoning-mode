@@ -7,7 +7,15 @@ import {
   isResponsesRequest,
   resolveRouteCandidate,
   Config,
+  inject,
+  name,
 } from '../lib/index.js'
+
+test('exports the host contract with the settings service as its only dependency', () => {
+  assert.equal(name, 'reasoning-mode')
+  assert.deepEqual(inject, ['settings'])
+  assert.equal(typeof apply, 'function')
+})
 
 test('serializes a self-contained settings transform callback', () => {
   const envelope = Config.toJSON()
@@ -26,11 +34,9 @@ test('serializes a self-contained settings transform callback', () => {
     models: [
       { provider: 'p', model: 'm', mode: 'pro', summary: 'concise' },
       { provider: 'p', model: 'm', mode: 'standard', summary: 'auto' },
-      { provider: 'q', model: 'n', mode: 'standard', summary: 'auto' },
+      { provider: 'q', model: 'n' },
     ],
   }), {
-    defaultMode: 'pro',
-    defaultSummary: 'detailed',
     models: [
       { provider: 'p', model: 'm', mode: 'pro', summary: 'concise' },
       { provider: 'q', model: 'n', mode: 'standard', summary: 'auto' },
@@ -86,8 +92,6 @@ test('rewrites an active Responses request and restores fetch on disposal', { co
   let watchCallback
   const settingsScope = {
     get: () => ({
-      defaultMode: 'standard',
-      defaultSummary: 'auto',
       models: [{ provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'concise' }],
     }),
     watch: (callback) => { watchCallback = callback; return () => {} },
@@ -148,8 +152,6 @@ test('rewrites a native Request body, preserves request fields, and removes stal
   globalThis.fetch = stubFetch
   const settingsScope = {
     get: () => ({
-      defaultMode: 'standard',
-      defaultSummary: 'auto',
       models: [{ provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'detailed' }],
     }),
     watch: () => () => {},
@@ -232,8 +234,6 @@ test('uses request affinity to select the exact provider among concurrent same-m
   globalThis.fetch = stubFetch
   const settingsScope = {
     get: () => ({
-      defaultMode: 'standard',
-      defaultSummary: 'auto',
       models: [
         { provider: 'cotton-codex', model: 'gpt-5.6-luna', mode: 'standard', summary: 'concise' },
         { provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'detailed' },
@@ -301,8 +301,6 @@ test('does not rewrite an ambiguous same-model request and restores after stream
   globalThis.fetch = stubFetch
   const settingsScope = {
     get: () => ({
-      defaultMode: 'standard',
-      defaultSummary: 'auto',
       models: [
         { provider: 'cotton-codex', model: 'gpt-5.6-luna', mode: 'standard', summary: 'auto' },
         { provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'detailed' },

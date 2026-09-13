@@ -1,3 +1,14 @@
+/**
+ * @zhourenke/dsh-reasoning-mode
+ *
+ * Configures the `reasoning.mode` and `reasoning.summary` fields of OpenAI
+ * Responses requests for explicitly enabled provider/model routes. The host
+ * half owns the durable model selection (a settings namespace limited to
+ * `models`) and wraps the final Host `fetch` boundary, associating each
+ * request with the exact provider/model observed through Responses session
+ * affinity. The browser half (src/client.ts) provides the checkbox-only
+ * settings card and the composer control in `conversation.input.right`.
+ */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 export declare const name = "reasoning-mode";
@@ -11,8 +22,6 @@ export interface ModelSettings {
     summary: ReasoningSummary;
 }
 export interface ReasoningModeConfig {
-    defaultMode: ReasoningMode;
-    defaultSummary: ReasoningSummary;
     /** Presence in this list means the exact provider/model route is enabled. */
     models: ModelSettings[];
 }
