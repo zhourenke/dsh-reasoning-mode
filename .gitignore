@@ -1,0 +1,7 @@
+node_modules/
+*.tgz
+coverage/
+.nyc_output/
+.DS_Store
+Thumbs.db
+pnpm-debug.log*
