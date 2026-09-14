@@ -33,11 +33,13 @@ import vm from 'node:vm'
 //    returns null unless `status === 'ready'`, so an unanswered Host renders
 //    nothing rather than an empty card.
 //
-// NOT modelled here: React's reconciler and hook semantics (the stub only
-// invokes lazy state initializers and memo callbacks), the host's real slot
-// registry, and the tab that dispatches the slot. This file proves the plugin's
-// side of the contract; the Host's side is proven by the card appearing in a
-// running deployment.
+// NOT modelled here: React's reconciler and full hook semantics (the default
+// stub only invokes lazy state initializers and memo callbacks), the host's real
+// slot registry, and the tab that dispatches the slot. The focused fallback
+// tests below use a small state/effect runner only to model the two rerenders
+// that matter for the session default route; it is not a replacement for React.
+// This file proves the plugin's side of the contract; the Host's side is proven
+// by the card appearing in a running deployment.
 // ---------------------------------------------------------------------------
 
 // The browser half is a plain script: it registers itself through
@@ -56,10 +58,10 @@ const definition = definitions[0]
  * imports. `elements` records every `createElement` call, which is how a test
  * observes what the card would render.
  */
-function makeRequire() {
+function makeRequire(options = {}) {
   const requested = []
   const elements = []
-  const React = {
+  const React = options.React ?? {
     createElement: (component, props, ...children) => {
       const element = { component, props, children }
       elements.push(element)
@@ -138,10 +140,79 @@ function makeCtx(options = {}) {
       return () => {}
     },
     get: (name) => (name === 'remote.session'
-      ? { modelCatalog: async () => ({ ok: true, value: { groups: [] } }) }
+      ? { modelCatalog: options.modelCatalog ?? (async () => ({ ok: true, value: { groups: [] } })) }
       : undefined),
   }
   return { ctx, state, scope }
+}
+
+function makeHookRunner() {
+  const state = []
+  const dependencies = []
+  const cleanups = []
+  let hookIndex = 0
+  let pendingEffects = []
+
+  const sameDependencies = (left, right) => left !== undefined
+    && right !== undefined
+    && left.length === right.length
+    && left.every((value, index) => Object.is(value, right[index]))
+
+  const schedule = (effect, deps) => {
+    const index = hookIndex++
+    if (dependencies[index] === undefined || !sameDependencies(dependencies[index], deps)) {
+      dependencies[index] = deps
+      pendingEffects.push({ effect, index })
+    }
+  }
+
+  const React = {
+    Fragment: () => null,
+    createElement: (component, props, ...children) => ({ component, props, children }),
+    useEffect: schedule,
+    useLayoutEffect: schedule,
+    useMemo: (fn) => {
+      hookIndex += 1
+      return fn()
+    },
+    useRef: (initial) => {
+      const index = hookIndex++
+      if (state[index] === undefined) state[index] = { current: initial }
+      return state[index]
+    },
+    useState: (initial) => {
+      const index = hookIndex++
+      if (state[index] === undefined) state[index] = typeof initial === 'function' ? initial() : initial
+      return [state[index], (next) => {
+        const value = typeof next === 'function' ? next(state[index]) : next
+        if (!Object.is(state[index], value)) state[index] = value
+      }]
+    },
+  }
+
+  return {
+    React,
+    render(component, props) {
+      hookIndex = 0
+      pendingEffects = []
+      return component(props)
+    },
+    flushEffects() {
+      const effects = pendingEffects
+      pendingEffects = []
+      for (const { effect, index } of effects) {
+        cleanups[index]?.()
+        cleanups[index] = effect()
+      }
+    },
+  }
+}
+
+function renderRegistered(runner, registration, props) {
+  return runner.render((nextProps) => {
+    const element = registration.render(nextProps)
+    return element.component(element.props)
+  }, props)
 }
 
 test('registers the reasoning settings card and composer control', () => {
@@ -250,6 +321,58 @@ test('the card renders nothing until the Host answers with a ready snapshot', ()
   assert.equal(card, null)
   assert.equal(elements.length, 1, 'only the card element itself may be created')
 })
+
+test('shows the composer control for a new session after the catalog supplies its default route', async () => {
+  const runner = makeHookRunner()
+  const { require } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  let calls = 0
+  const { ctx, state } = makeCtx({
+    snapshot: readySnapshot({ models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] }),
+    modelCatalog: async () => {
+      calls += 1
+      return { ok: true, value: { default: { provider: 'provider-a', model: 'model-a' }, groups: [] } }
+    },
+  })
+  plugin.apply(ctx)
+
+  const registered = state.registered[1]
+  const props = { sessionId: 'session-a', useProjection: () => ({ next: null, lastUsed: null }) }
+  assert.equal(renderRegistered(runner, registered, props), null)
+  runner.flushEffects()
+  await Promise.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(calls, 1)
+  const control = renderRegistered(runner, registered, props)
+  assert.equal(control.props.className, 'rm-control-root')
+})
+
+test('does not request a catalog or render the composer control without a session', async () => {
+  const runner = makeHookRunner()
+  const { require } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  let calls = 0
+  const { ctx, state } = makeCtx({
+    snapshot: readySnapshot({ models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] }),
+    modelCatalog: async () => {
+      calls += 1
+      return { ok: true, value: { default: { provider: 'provider-a', model: 'model-a' }, groups: [] } }
+    },
+  })
+  plugin.apply(ctx)
+
+  const registered = state.registered[1]
+  const props = { useProjection: () => ({ next: null, lastUsed: null }) }
+  assert.equal(renderRegistered(runner, registered, props), null)
+  runner.flushEffects()
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(renderRegistered(runner, registered, props), null)
+  assert.equal(calls, 0)
+})
+
 
 test('can be concatenated with the sibling reasoning-summary client bundle', () => {
   const modeBundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')

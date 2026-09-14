@@ -19,7 +19,7 @@ README 是刻意精简的：上述四类内容曾经在 README 里，按要求�
 | `lib/types/index.d.ts` | 宿主类型声明，**必须提交** |
 | `lib/types/client.d.ts` | 浏览器类型声明，**必须提交** |
 | `test/index.test.mjs` | 宿主半边（9 项）：schema 归一化、请求改写、路由解析、fetch 包装与还原、模块契约 |
-| `test/client.test.mjs` | 浏览器半边（9 项）：**真正执行** `lib/client.js`，含卡片挂载与未 ready 分支 |
+| `test/client.test.mjs` | 浏览器半边（11 项）：**真正执行** `lib/client.js`，含卡片挂载与未 ready 分支、session 默认模型 fallback 与无 session 分支 |
 | `cordis.patch.yml` | profile 层插入声明（`- insert:` 形式） |
 | `tsconfig.json` | 宿主半边配置（Node，无 DOM） |
 | `tsconfig.client.json` | 浏览器半边配置（DOM，无 Node 类型） |
@@ -187,9 +187,11 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 
 `toggle()` 添加条目时用 `savedByKey.get(key) ?? { …, mode: 'standard', summary: 'auto' }`：目录里从没出现过的路由使用硬编码默认值，而**曾经保存过**的路由从 `savedModels` 取回原值。设置界面因此不需要「新增模型默认值」这类配置项——用户明确要求过不要它。
 
-### 14. 输入栏控件只在当前路由已勾选时出现
+### 14. 输入栏控件按当前 session 路由出现；新 session 用目录默认值兜底
 
-控件通过 `props.useProjection('modelSelection')` 取 `next ?? lastUsed` 得到当前会话路由，再在 `models` 里找精确匹配；`config === undefined` 时 `return null`。选中菜单项直接 `scope.set('models', next)`（没有暂存态、没有保存按钮），所以它和卡片的交互模型不同，不要试图统一。
+控件从官方 session 标准源拿到 `sessionId`，再通过 `props.useProjection('modelSelection')` 取 `next ?? lastUsed`。已有 projection 路由始终优先；新 session 如果 projection 还是 `{ next: null, lastUsed: null }`，就调用插件已注入的 `remote.session.modelCatalog()`，用目录的 `default` 作为临时当前路由。只有这个路由已经在 `models` 里勾选时控件才渲染；目录请求完成前仍然返回 `null`。选中菜单项直接 `scope.set('models', next)`（没有暂存态、没有保存按钮），所以它和卡片的交互模型不同，不要试图统一。
+
+没有 `sessionId` 时代表当前还没有可寻址的 session（通常是未选择工作区的空 composer）：控件直接返回 `null`，**不请求模型目录**。这条分支不能用"目录默认值"硬凑出一个路由，否则会把没有目标 session 的 UI 状态误显示成可配置路由。
 
 ### 15. 菜单几何照抄官方
 
@@ -207,9 +209,10 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 |---|---|---|---|
 | 快照未就绪 | `settingsScope` 快照拿不到值 | 返回 `null`，不产出任何元素 | 不渲染 |
 | 只读 | `snapshot.writable === false` | 顶部显示「设置当前为只读。」，保存按钮禁用 | **不做只读判断**：菜单照常可点，`scope.set` 被拒后由 `.catch(() => {})` 静默吞掉 |
-| 目录加载失败 | `catalogError !== null` | 显示「模型目录加载失败；已保存的选择不会被自动删除。」+ 具体错误 + **重试** | 不依赖目录，照常显示 |
-| 目录为空 | `catalog.length === 0` 且 `effective.size === 0` | 显示「当前没有可用的模型目录。」 | 同上 |
-| 目录加载中 | `catalog === null` 且无错误 | 显示「正在加载模型目录…」 | 同上 |
+| 目录加载失败 | `catalogError !== null` | 显示「模型目录加载失败；已保存的选择不会被自动删除。」+ 具体错误 + **重试** | 已有 projection 路由照常显示；新 session 没有目录默认路由时不渲染 |
+| 目录为空 | `catalog.length === 0` 且 `effective.size === 0` | 显示「当前没有可用的模型目录。」 | 已有 projection 路由照常显示；新 session 没有目录默认路由时不渲染 |
+| 目录加载中 | `catalog === null` 且无错误 | 显示「正在加载模型目录…」 | 新 session 在目录默认路由返回前不渲染；已有 projection 路由不依赖目录，照常显示 |
+| 没有可寻址 session | `props.sessionId === undefined` | 不适用 | 不渲染，也不请求目录 |
 | 有未保存改动 | `dirty` | 标题旁显示「未保存」，保存可点 | 不适用（控件即时写盘） |
 | 保存失败 | 写盘 promise 被拒 | 显示「保存失败，请重试。」 | 写盘被拒时静默 |
 
@@ -223,7 +226,7 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 | 文件 | 覆盖 |
 |---|---|
 | `test/index.test.mjs` | `Config.toJSON()` 的水合与归一化（含旧字段丢弃）、`applyReasoningBody` 保留其它字段、`isResponsesRequest`、`resolveRouteCandidate` 的歧义规则、`apply()` 装 fetch 包装并在卸载后还原、原生 `Request` 体重建与 `content-length` 移除、并发同 model 路由的亲和选择、stream 结束后的还原、模块契约（`name`/`inject`/`apply`） |
-| `test/client.test.mjs` | 槽注册与 `inject` 面、官方菜单结构（静态断言源码与产物）、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/`<select>`）、**挂载一次卡片并断言注入面被转交**、未 ready 时返回 `null` 且不产出元素、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
+| `test/client.test.mjs` | 槽注册与 `inject` 面、官方菜单结构（静态断言源码与产物）、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/`<select>`）、**挂载一次卡片并断言注入面被转交**、未 ready 时返回 `null` 且不产出元素、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
 
 两条纪律：
 

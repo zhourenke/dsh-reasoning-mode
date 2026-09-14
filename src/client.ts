@@ -30,12 +30,13 @@ window.__ModuleLoader__.load({
 
     type Mode = 'standard' | 'pro'
     type Summary = 'auto' | 'concise' | 'detailed'
+    type Route = { provider: string; model: string }
     type Selection = { provider: string; model: string; mode: Mode; summary: Summary }
     type CatalogModel = { id: string; name?: string; description?: string }
     type CatalogGroup = { id: string; name?: string; models?: CatalogModel[] }
     type CatalogResponse = {
       ok: boolean
-      value?: { groups?: CatalogGroup[] }
+      value?: { default?: { provider: string; model: string }; groups?: CatalogGroup[] }
       error?: { code?: string; message?: string }
     }
     type SessionFace = { modelCatalog(): Promise<CatalogResponse> }
@@ -404,8 +405,14 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function routeFromProjection(projection: any): { provider: string; model: string } | undefined {
+    function routeFromProjection(projection: any): Route | undefined {
       const route = projection?.next ?? projection?.lastUsed
+      if (typeof route?.provider !== 'string' || typeof route?.model !== 'string') return undefined
+      return { provider: route.provider, model: route.model }
+    }
+
+    function routeFromCatalog(response: CatalogResponse): Route | undefined {
+      const route = response.ok ? response.value?.default : undefined
       if (typeof route?.provider !== 'string' || typeof route?.model !== 'string') return undefined
       return { provider: route.provider, model: route.model }
     }
@@ -418,12 +425,17 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(false)
       const [pane, setPane] = useState('root')
       const [busy, setBusy] = useState(false)
+      const [catalogDefault, setCatalogDefault] = useState(undefined as { sessionId: string; route: Route } | undefined)
       const rootRef = useRef(null)
       const triggerRef = useRef(null)
       const menuRef = useRef(null)
       const [menuPos, setMenuPos] = useState(null)
+      const sessionId = typeof props.sessionId === 'string' ? props.sessionId : undefined
+      const sessionFace = props.sessionFace as (() => SessionFace | undefined) | undefined
       const projection = typeof props.useProjection === 'function' ? props.useProjection('modelSelection') : undefined
-      const route = routeFromProjection(projection)
+      const projectedRoute = routeFromProjection(projection)
+      const fallbackRoute = sessionId !== undefined && catalogDefault?.sessionId === sessionId ? catalogDefault.route : undefined
+      const route = sessionId === undefined ? undefined : projectedRoute ?? fallbackRoute
       const snapshot = scope.getSnapshot()
       const models = copyModels(snapshot.value)
       const config = route === undefined ? undefined : models.find((item) => keyOf(item) === keyOf(route))
@@ -431,6 +443,28 @@ window.__ModuleLoader__.load({
       const menuId = `reasoning-mode-menu-${routeId.replace(/[^A-Za-z0-9_-]/g, '-') || 'current'}`
 
       useEffect(() => scope.subscribe(() => setRevision((value: number) => value + 1)), [scope])
+      useEffect(() => {
+        if (projectedRoute !== undefined || sessionId === undefined) {
+          setCatalogDefault(undefined)
+          return undefined
+        }
+        const face = typeof sessionFace === 'function' ? sessionFace() : undefined
+        if (face === undefined || typeof face.modelCatalog !== 'function') {
+          setCatalogDefault(undefined)
+          return undefined
+        }
+        let cancelled = false
+        void Promise.resolve().then(() => face.modelCatalog()).then((response) => {
+          if (cancelled) return
+          const route = routeFromCatalog(response)
+          setCatalogDefault(route === undefined ? undefined : { sessionId, route })
+        }, () => {
+          if (!cancelled) setCatalogDefault(undefined)
+        })
+        return () => {
+          cancelled = true
+        }
+      }, [projectedRoute?.provider, projectedRoute?.model, sessionId, sessionFace])
       useEffect(() => {
         setOpen(false)
         setPane('root')
@@ -583,7 +617,7 @@ window.__ModuleLoader__.load({
         id: NS,
         order: 85,
         locale: NS,
-      }, (props: any) => e(ModeControl, { ...props, scope, t })))
+      }, (props: any) => e(ModeControl, { ...props, scope, sessionFace, t })))
     }
 
     return { apply, inject: ['slots', 'settingsScope', 'locale', 'remote', 'remote.session'] }
