@@ -2,7 +2,7 @@
 
 面向维护者。使用者请看 [README.md](README.md)——那里只回答「能不能用、怎么调」：安装、上手三步与配置表。请求准入条件、跳过与只读时的行为、两处界面入口的交互差异、已知限制、实现内部细节与踩过的坑全部留在本文档。
 
-README 是刻意精简的：上述四类内容曾经在 README 里，按要求移除后没有第二落点，发布指南 §4.8 对 README 内容的要求因此由本文档承担——**不要因为指南列了它们就把它们加回 README**。
+README 是刻意精简的：上述四类内容曾经在 README 里，按要求移除后没有第二落点，发布指南「文档写作规范」对 README 内容的要求因此由本文档承担——**不要因为指南列了它们就把它们加回 README**。
 
 本插件是**双半边**插件：`src/index.ts` 跑在宿主 Node 进程里，`src/client.ts` 是浏览器侧由 ModuleLoader 加载的普通脚本。两半边不能互相 `import`，所有跨半边的身份字符串都靠**逐字一致**维持（见实现要点 1）。
 
@@ -235,7 +235,7 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 
 ## 发布纪律
 
-按 `PLUGIN_RELEASE_GUIDE.md` §4 的清单跑，本插件相关的判据：
+按 `PLUGIN_RELEASE_GUIDE.md`「提交前验证清单」跑，本插件相关的判据：
 
 ```powershell
 pnpm install --no-frozen-lockfile
