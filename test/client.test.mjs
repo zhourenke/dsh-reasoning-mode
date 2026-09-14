@@ -33,6 +33,23 @@ import vm from 'node:vm'
 //    returns null unless `status === 'ready'`, so an unanswered Host renders
 //    nothing rather than an empty card.
 //
+// 4. `remote.session.modelCatalog()` resolves the Host-generation model catalog
+//    (`dsh-api-session-controller/lib/types/types.d.ts` ModelCatalog:
+//    `default: ModelSelection` is the model used by unconfigured Sessions).
+//    The official composer model seat renders `projected.next ??
+//    catalog.value.default` (`dsh-client-ui-model-selection/lib/client.js`
+//    ModelDirectory.syncInputs), which is why a new Session with an empty
+//    projection still shows a model seat. The `{ ok, value, error }` wrapper
+//    is the RPC result shape that `ModelCatalogDirectory.load()` checks
+//    (`response.ok` before reading `response.value`).
+//
+// 5. `sessionId` and `useProjection` reach the slot from the built-in session
+//    standard source (`dsh-client-ui-session/lib/client.js` BUILTIN_SOURCE:
+//    `props: ['sessionId']`, `keyedHooks: ['projection']`), so
+//    `conversation.input.right` occupants can read both even though the slot's
+//    owner props are `{}`. `sessionId === undefined` is the no-Session inert
+//    composer, which is why the fallback must not fire there.
+//
 // NOT modelled here: React's reconciler and full hook semantics (the default
 // stub only invokes lazy state initializers and memo callbacks), the host's real
 // slot registry, and the tab that dispatches the slot. The focused fallback

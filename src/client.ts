@@ -36,7 +36,7 @@ window.__ModuleLoader__.load({
     type CatalogGroup = { id: string; name?: string; models?: CatalogModel[] }
     type CatalogResponse = {
       ok: boolean
-      value?: { default?: { provider: string; model: string }; groups?: CatalogGroup[] }
+      value?: { default: { provider: string; model: string }; groups?: CatalogGroup[] }
       error?: { code?: string; message?: string }
     }
     type SessionFace = { modelCatalog(): Promise<CatalogResponse> }
