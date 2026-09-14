@@ -444,17 +444,11 @@ window.__ModuleLoader__.load({
 
       useEffect(() => scope.subscribe(() => setRevision((value: number) => value + 1)), [scope])
       useEffect(() => {
-        if (projectedRoute !== undefined || sessionId === undefined) {
-          setCatalogDefault(undefined)
-          return undefined
-        }
+        if (projectedRoute !== undefined || sessionId === undefined) return undefined
         const face = typeof sessionFace === 'function' ? sessionFace() : undefined
-        if (face === undefined || typeof face.modelCatalog !== 'function') {
-          setCatalogDefault(undefined)
-          return undefined
-        }
+        if (face === undefined || typeof face.modelCatalog !== 'function') return undefined
         let cancelled = false
-        void Promise.resolve().then(() => face.modelCatalog()).then((response) => {
+        void face.modelCatalog().then((response) => {
           if (cancelled) return
           const route = routeFromCatalog(response)
           setCatalogDefault(route === undefined ? undefined : { sessionId, route })
