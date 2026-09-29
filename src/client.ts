@@ -32,14 +32,14 @@ window.__ModuleLoader__.load({
     const PACKAGE_NAME = '@zhourenke/dsh-reasoning-mode'
     const React: any = require('react')
     const e = React.createElement
-    const { useEffect, useLayoutEffect, useMemo, useRef, useState } = React
+    const { useEffect, useMemo, useState } = React
     const {
       IconCheckOutlineRegular,
       IconChevronDownOutlineRegular,
       IconChevronRightOutlineRegular,
+      Menu,
       SettingsForm,
     } = require('@deepseek-ai/dsh-client-ui-primitives')
-    const ReactDOM: any = require('react-dom')
 
     type Mode = 'standard' | 'pro'
     type Summary = 'auto' | 'concise' | 'detailed'
@@ -158,21 +158,16 @@ window.__ModuleLoader__.load({
       .rm-control-separator { color: var(--dsw-alias-label-caption); flex: none; font-size: 13px; font-weight: 500; line-height: 20px; }
       .rm-control-chevron { color: var(--dsw-alias-label-caption); flex: none; transition: transform .12s; }
       .rm-control-chevron-open { transform: rotate(180deg); }
-      .rm-control-menu { z-index: 1100; width: max-content; min-width: min(240px, calc(100vw - 32px)); max-width: min(420px, calc(100vw - 32px)); max-height: min(360px, calc(100vh - 96px)); color: var(--dsw-alias-label-primary); background: var(--dsw-specific-menu); --dsw-elevation-stroke-color: var(--dsw-alias-border-l1); --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2); --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2); border: 0; border-radius: 20px; box-shadow: var(--dsw-elevation-prominent); flex-direction: column; padding: 4px; display: flex; position: fixed; overflow: hidden; }
-      .rm-menu-cell { appearance: none; box-sizing: border-box; width: auto; min-width: 100%; height: 40px; color: var(--dsw-alias-label-primary); cursor: pointer; text-align: left; background: transparent; border: 0; border-radius: 10px; outline: none; align-items: center; gap: 8px; padding: 0 10px; font: inherit; font-size: 14px; line-height: 22px; display: flex; }
-      .rm-menu-cell:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
-      .rm-menu-cell:focus-visible { box-shadow: 0 0 0 2px var(--dsw-alias-border-l3) inset; }
-      .rm-menu-cell:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
-      .rm-menu-cell-label { white-space: nowrap; flex: none; }
-      .rm-menu-cell-value { text-overflow: ellipsis; white-space: nowrap; text-align: right; min-width: 0; color: var(--dsw-alias-label-tertiary); flex: auto; overflow: hidden; }
-      .rm-menu-cell-chevron { color: var(--dsw-alias-label-tertiary); flex: none; }
-      .rm-menu-option { appearance: none; box-sizing: border-box; width: auto; min-width: 100%; min-height: 38px; color: inherit; text-align: left; cursor: pointer; background: transparent; border: 0; border-radius: 10px; outline: none; align-items: center; gap: 8px; padding: 6px 8px; font: inherit; font-size: 13.3333px; line-height: normal; display: flex; }
-      .rm-menu-option:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
-      .rm-menu-option:focus-visible { box-shadow: 0 0 0 2px var(--dsw-alias-border-l3) inset; }
-      .rm-menu-option:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
-      .rm-menu-option-copy { flex-direction: column; flex: 1; min-width: 0; display: flex; }
-      .rm-menu-option-label { color: inherit; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; line-height: 20px; overflow: hidden; }
-      .rm-menu-check { color: var(--dsw-alias-label-primary); flex: 0 0 18px; place-items: center; display: grid; }
+      /* Only the card's measurements are ours; its material, radius, elevation,
+         rows, hover/focus fills and check glyph all come from the official Menu. */
+      .rm-control-menu { width: max-content; min-width: min(240px, calc(100vw - 32px)); max-width: min(420px, calc(100vw - 32px)); max-height: min(360px, calc(100vh - 96px)); overflow: hidden; }
+      .rm-cell { align-items: center; gap: 8px; width: 100%; min-width: 0; display: flex; }
+      .rm-cell-label { white-space: nowrap; flex: none; }
+      .rm-cell-value { text-overflow: ellipsis; white-space: nowrap; min-width: 0; color: var(--dsw-alias-label-tertiary); margin-left: auto; overflow: hidden; }
+      .rm-cell-chevron { color: var(--dsw-alias-label-tertiary); flex: none; }
+      .rm-option { align-items: center; gap: 8px; width: 100%; min-width: 0; display: flex; }
+      .rm-option-label { text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; overflow: hidden; }
+      .rm-option-check { color: var(--dsw-alias-label-primary); flex: 0 0 18px; place-items: center; display: grid; }
       @media (max-width: 620px) {
         .uV2eYG_trailing:has(.rm-control-root) > .rm-control-root { max-width: 132px; }
         .rm-control-trigger { max-width: 132px; }
@@ -419,19 +414,29 @@ window.__ModuleLoader__.load({
       return { provider: route.provider, model: route.model }
     }
 
+    /** The leaf rows, each carrying the patch it writes when selected. */
+    const CHOICES: Record<string, Partial<Selection>> = {
+      'mode:standard': { mode: 'standard' },
+      'mode:pro': { mode: 'pro' },
+      'summary:auto': { summary: 'auto' },
+      'summary:concise': { summary: 'concise' },
+      'summary:detailed': { summary: 'detailed' },
+    }
+
+    /**
+     * The composer pill: the current route's mode and summary, each a cell of
+     * two nested official Menu cards. Placement, the portal, outside click,
+     * Escape, the arrow walk and the focus return all belong to the official
+     * Menu primitive — this component owns only the values it reads and writes.
+     */
     function ModeControl(props: any): any {
       const scope = props.scope as Scope
       const translate = props.t as (key: string) => unknown
       const t = (key: string) => String(translate(key))
       const [, setRevision] = useState(0)
       const [open, setOpen] = useState(false)
-      const [pane, setPane] = useState('root')
       const [busy, setBusy] = useState(false)
       const [catalogDefault, setCatalogDefault] = useState(undefined as { sessionId: string; route: Route } | undefined)
-      const rootRef = useRef(null)
-      const triggerRef = useRef(null)
-      const menuRef = useRef(null)
-      const [menuPos, setMenuPos] = useState(null)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : undefined
       const sessionFace = props.sessionFace as (() => SessionFace | undefined) | undefined
       const projection = typeof props.useProjection === 'function' ? props.useProjection('modelSelection') : undefined
@@ -442,7 +447,6 @@ window.__ModuleLoader__.load({
       const models = copyModels(snapshot.value)
       const config = route === undefined ? undefined : models.find((item) => keyOf(item) === keyOf(route))
       const routeId = route === undefined ? '' : keyOf(route)
-      const menuId = `reasoning-mode-menu-${routeId.replace(/[^A-Za-z0-9_-]/g, '-') || 'current'}`
 
       useEffect(() => scope.subscribe(() => setRevision((value: number) => value + 1)), [scope])
       useEffect(() => {
@@ -463,125 +467,74 @@ window.__ModuleLoader__.load({
       }, [projectedRoute?.provider, projectedRoute?.model, sessionId, sessionFace])
       useEffect(() => {
         setOpen(false)
-        setPane('root')
       }, [routeId])
-      useEffect(() => {
-        if (!open || typeof document === 'undefined') return undefined
-        const closeOutside = (event: any) => {
-          if (rootRef.current?.contains(event.target) || menuRef.current?.contains(event.target)) return
-          setOpen(false)
-          setPane('root')
-        }
-        const onKeyDown = (event: any) => {
-          if (event.key !== 'Escape') return
-          event.preventDefault()
-          if (pane !== 'root') setPane('root')
-          else {
-            setOpen(false)
-            setPane('root')
-          }
-        }
-        document.addEventListener('mousedown', closeOutside)
-        document.addEventListener('keydown', onKeyDown)
-        return () => {
-          document.removeEventListener('mousedown', closeOutside)
-          document.removeEventListener('keydown', onKeyDown)
-        }
-      }, [open, pane])
-      useLayoutEffect(() => {
-        if (!open || typeof window === 'undefined') {
-          setMenuPos(null)
-          return undefined
-        }
-        const place = () => {
-          const rect = triggerRef.current?.getBoundingClientRect()
-          if (!rect) return
-          const margin = 12
-          const width = menuRef.current?.offsetWidth ?? 0
-          const height = menuRef.current?.offsetHeight ?? 0
-          let left = rect.right - width
-          let top = rect.top - 8 - height
-          if (width > 0) left = Math.min(Math.max(left, margin), window.innerWidth - width - margin)
-          if (height > 0) top = Math.min(Math.max(top, margin), window.innerHeight - height - margin)
-          setMenuPos({ left, top })
-        }
-        place()
-        window.addEventListener('scroll', place, true)
-        window.addEventListener('resize', place)
-        return () => {
-          window.removeEventListener('scroll', place, true)
-          window.removeEventListener('resize', place)
-        }
-      }, [open, pane])
 
       if (config === undefined) return null
 
-      const update = (patch: Partial<Selection>) => {
-        if (busy) return
+      const update = (id: string) => {
+        const patch = CHOICES[id]
+        if (patch === undefined || busy) return
         const current = copyModels(scope.getSnapshot().value)
         const next = current.map((item) => keyOf(item) === routeId ? { ...item, ...patch } : item)
+        setOpen(false)
         setBusy(true)
         scope.set('models', next).catch(() => {}).finally(() => setBusy(false))
       }
-      const close = () => {
-        setOpen(false)
-        setPane('root')
-      }
       const modeLabel = config.mode === 'standard' ? t('standard') : t('pro')
       const summaryLabel = config.summary === 'concise' ? t('concise') : config.summary === 'detailed' ? t('detailed') : t('auto')
-      const option = (value: string, label: string, current: string, patch: Partial<Selection>) => e('button', {
-        type: 'button', className: 'rm-menu-option', role: 'menuitemradio', 'aria-checked': current === value, disabled: busy,
-        onClick: () => { update(patch); close() },
-      },
-        e('span', { className: 'rm-menu-option-copy' }, e('span', { className: 'rm-menu-option-label' }, label)),
-        e('span', { className: 'rm-menu-check', 'aria-hidden': true }, current === value ? e(IconCheckOutlineRegular, null) : null),
-      )
-      const cell = (label: string, value: string, nextPane: string) => e('button', {
-        type: 'button', className: 'rm-menu-cell', role: 'menuitem', 'aria-haspopup': 'menu',
-        onClick: () => setPane(nextPane),
-      },
-        e('span', { className: 'rm-menu-cell-label' }, label),
-        e('span', { className: 'rm-menu-cell-value' }, value),
-        e(IconChevronRightOutlineRegular, { className: 'rm-menu-cell-chevron' }),
-      )
-      const menu = e('div', {
-        ref: menuRef, id: menuId, className: 'rm-control-menu', style: menuPos ?? { visibility: 'hidden', left: 0, top: 0 },
-        role: 'menu', 'aria-label': t('menuLabel'), 'aria-busy': busy,
-      },
-        pane === 'root' ? e(React.Fragment, null,
-          cell(t('modeLabel'), modeLabel, 'mode'),
-          cell(t('summaryLabel'), summaryLabel, 'summary'),
-        ) : pane === 'mode' ? e(React.Fragment, null,
-          option('standard', t('standard'), config.mode, { mode: 'standard' }),
-          option('pro', t('pro'), config.mode, { mode: 'pro' }),
-        ) : e(React.Fragment, null,
-          option('auto', t('auto'), config.summary, { summary: 'auto' }),
-          option('concise', t('concise'), config.summary, { summary: 'concise' }),
-          option('detailed', t('detailed'), config.summary, { summary: 'detailed' }),
+      /* The primitive draws the check for its primary rows; a nested row carries
+         only icon, label and shortcut, so a leaf's own mark stays in its label. */
+      const option = (value: string, label: string, current: string, group: string) => ({
+        id: `${group}:${value}`,
+        label: e('span', { className: 'rm-option' },
+          e('span', { className: 'rm-option-label' }, label),
+          e('span', { className: 'rm-option-check', 'aria-hidden': true }, current === value ? e(IconCheckOutlineRegular, null) : null),
         ),
-      )
-      const menuNode = ReactDOM && typeof ReactDOM.createPortal === 'function' && typeof document !== 'undefined'
-        ? ReactDOM.createPortal(menu, document.body)
-        : menu
+      })
+      const cell = (id: string, label: string, value: string, submenu: any[]) => ({
+        id,
+        label: e('span', { className: 'rm-cell' },
+          e('span', { className: 'rm-cell-label' }, label),
+          e('span', { className: 'rm-cell-value' }, value),
+          e(IconChevronRightOutlineRegular, { className: 'rm-cell-chevron' }),
+        ),
+        submenu,
+      })
 
-      return e('div', { className: 'rm-control-root', ref: rootRef },
-        e('button', {
-          ref: triggerRef,
+      return e(Menu, {
+        open,
+        className: 'rm-control-root',
+        listClassName: 'rm-control-menu',
+        align: 'end',
+        side: 'top',
+        portal: true,
+        items: [
+          cell('cell:mode', t('modeLabel'), modeLabel, [
+            option('standard', t('standard'), config.mode, 'mode'),
+            option('pro', t('pro'), config.mode, 'mode'),
+          ]),
+          cell('cell:summary', t('summaryLabel'), summaryLabel, [
+            option('auto', t('auto'), config.summary, 'summary'),
+            option('concise', t('concise'), config.summary, 'summary'),
+            option('detailed', t('detailed'), config.summary, 'summary'),
+          ]),
+        ],
+        onSelect: update,
+        onClose: () => setOpen(false),
+        anchor: e('button', {
           type: 'button', className: 'rm-control-trigger', disabled: busy,
           'aria-label': `${t('modeLabel')}: ${modeLabel}; ${t('summaryLabel')}: ${summaryLabel}`,
-          'aria-haspopup': 'menu', 'aria-expanded': open, 'aria-controls': open ? menuId : undefined,
-          title: `${modeLabel} · ${summaryLabel}`,
-          onClick: () => { if (open) close(); else { setPane('root'); setOpen(true) } },
+          'aria-haspopup': 'menu', 'aria-expanded': open,
+          title: `${modeLabel} \u00b7 ${summaryLabel}`,
+          onClick: () => setOpen((value: boolean) => !value),
         },
           e('span', { className: 'rm-control-value' }, modeLabel),
-          e('span', { className: 'rm-control-separator', 'aria-hidden': true }, '·'),
+          e('span', { className: 'rm-control-separator', 'aria-hidden': true }, '\u00b7'),
           e('span', { className: 'rm-control-value' }, summaryLabel),
           e(IconChevronDownOutlineRegular, { className: `rm-control-chevron ${open ? 'rm-control-chevron-open' : ''}` }),
         ),
-        open ? menuNode : null,
-      )
+      })
     }
-
     function apply(ctx: any): void {
       if (typeof document !== 'undefined' && !document.querySelector('style[data-plugin-css="reasoning-mode"]')) {
         const style = document.createElement('style')

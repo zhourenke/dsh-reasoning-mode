@@ -205,6 +205,14 @@ export const Config = z.object({
 
 `draft / saved` 两个集合仍然保留：`draftModels` 是页面正在编辑的暂存集合（初始为 `form.state.value` 的副本），`savedModels` 每次渲染从 `form.state.value` 重算；只有**不脏**（`!dirty`）时外部更新才覆盖 draft，否则用户正在编辑的内容会被冲掉。
 
+**座位选择的实测依据**（0.1.7 把整张客户端座位表以数据形式内置在 `dsh-cordis-client-runner/lib/client.js` 里，可直接读）：
+
+- `plugins.row.config` 这条记录：`kind: 'keyed'`、`registerOptions` 只有 `key`（required）、**`occupants: []`、`keyDomain: "open: … none are taken yet"`**——这个座位目前没人占。
+- `plugins.item` 的 `occupants` 已被官方伴随包占满、`keyDomain` 为空串，文档也写明它 "OCCUPIED by the official settings pages, one companion package per host-plane namespace"。**它仍然可用**（`formFor(item.id)` 与行页面是同一套机制），代价是把本插件的卡片塞进官方分组、与官方伴随包并列——行用途的配置按文档应落在 `plugins.row.config`。
+- 键的格式由官方构造函数 `rowConfigKey(bundle, rowId)` = `` `${bundle}#${rowId}` `` 决定（`bundle` 是包名，`rowId` 是包内 patch 声明的行 id），页面侧用它建 key、`configForm(rowId)` 取表单。
+- **`form` 只在 `configForms.describe().namespaces` 里存在 `ns === 行 id` 时才有值**（`formFor(rowId)` 的第一行就是这个判断），所以「行 id = 条目 id = `configForms` namespace」三者必须一致——本插件三者都是 `reasoning-mode`。
+- 注册选项里的 `locale` 决定 props 上有没有 `t`（"present exactly on entries whose registration declares `locale:`"）；`slots.inject(slot, () => slots.register({…}, render))` 这个嵌套写法就是官方数据集里给出的范例，其返回值即 `whileServed` 需要的 disposer。
+
 ### 13. 「不可用」分组必须基于 effective 而不是 draft
 
 ```ts
@@ -223,9 +231,15 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 
 没有 `sessionId` 时代表当前还没有可寻址的 session（通常是未选择工作区的空 composer）：控件直接返回 `null`，**不请求模型目录**。这条分支不能用"目录默认值"硬凑出一个路由，否则会把没有目标 session 的 UI 状态误显示成可配置路由。
 
-### 16. 菜单几何照抄官方
+### 16. 输入栏菜单整套交给官方 `Menu` 原语
 
-`conversation.input.right` 槽里的控件按官方嵌套菜单写：根面板两行 `rm-menu-cell`（左侧标签、右侧当前值、行尾 chevron），子面板若干 `rm-menu-option`（选中项右侧打勾）。关键尺寸：cell `height: 40px`、option `min-height: 38px`、菜单圆角 `20px`、`--dsw-elevation-prominent`、`z-index: 1100`。**没有标题行，也没有返回行**——用户明确要求过与官方一致，子面板靠 Escape / 点击外部回到根面板。
+`conversation.input.right` 槽里的控件不再自绘菜单。官方 primitives 导出了 `Menu`（+ `MenuItemButton`、`MenuSurface`），它原生支持本控件需要的全部行为：`anchor` 就地渲染触发器、`submenu` 是 hover/focus 打开的右侧嵌套卡片、`selectedId`/`selectedIds` 由原语画勾、`side`/`align`/`portal` 负责定位与传送、`onClose` 覆盖点击外部与 Escape、以及行间的方向键走位与选择后焦点回到触发器。所以下面这些**全部删掉了**，不要再写回来：
+
+- `.rm-menu-cell*` / `.rm-menu-option*` / `.rm-menu-check` 那一整套样式（含 `height: 40px`、`min-height: 38px`、圆角 `20px`、`--dsw-elevation-prominent`、`z-index: 1100`）；
+- 手动 `document.addEventListener('mousedown'/'keydown')`、`pane` 状态与 Escape 回退逻辑；
+- `useLayoutEffect` 里的 `place()`（12px 边距、`getBoundingClientRect`、scroll/resize 监听）与 `ReactDOM.createPortal`——`portal: true` 就是同一套定位，官方那份连 `MARGIN = 12` 都与我们原先抄的一致。
+
+留给本插件的是**数据**：两个 submenu 父行（`cell:mode`、`cell:summary`，行内 `rm-cell-label` / `rm-cell-value` / chevron）与五个叶子（`mode:*` / `summary:*`），`onSelect` 收到叶子 id 后写一次 `models`（`CHOICES` 表把 id 映射成 patch；父行与未知 id 不写）。**唯一的例外是叶子的勾**：原语只给主行画 `IconCheckOutlineRegular`，嵌套行只渲染 `icon`/`label`/`shortcut`，所以叶子的选中标记留在自己的 label 里（`rm-option-check`）。CSS 只剩卡片尺寸（`rm-control-menu`，经 `listClassName` 落到 portal 出去的卡片上）。
 
 ### 17. 文案只有一个落点，README 是第二落点
 
@@ -256,7 +270,7 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 | 文件 | 覆盖 |
 |---|---|
 | `test/index.test.mjs` | `Config.toJSON()` 里 `models` 的 volatile 标记与字段形状、`normalizeModels` 的归一化、`applyReasoningBody` 保留其它字段、`isResponsesRequest`、`resolveRouteCandidate` 的歧义规则、`apply()` 装 fetch 包装并在卸载后还原、原生 `Request` 体重建与 `content-length` 移除、并发同 model 路由的亲和选择、stream 结束后的还原、模块契约（`name`/`inject`/`apply`）、**volatile 的活性（改 `config.models` 后下一请求即生效）** |
-| `test/client.test.mjs` | `plugins.row.config` 注册（key、`whileServed` 门禁）与 `inject` 面、官方菜单结构（静态断言源码与产物）、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/自绘卡片样式）、**挂载一次配置页并断言注入面被转交、且不会自带 scope**、未 ready / 无 form 时返回 `null`、**摘要视图只出一行文本且不读目录**、**暂存后一次带修订号的写入**、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
+| `test/client.test.mjs` | `plugins.row.config` 注册（key、`whileServed` 门禁）与 `inject` 面、**输入栏控件渲染出的就是官方 `Menu` 及其 items/submenu/leaf id**、不再自实现菜单的缺席断言（无 `rm-menu*`、`createPortal`、`ReactDOM`、`mousedown`、`getBoundingClientRect`）、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/自绘卡片样式）、**挂载一次配置页并断言注入面被转交、且不会自带 scope**、未 ready / 无 form 时返回 `null`、**摘要视图只出一行文本且不读目录**、**暂存后一次带修订号的写入**、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
 
 两条纪律：
 

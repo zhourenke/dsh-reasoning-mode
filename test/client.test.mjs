@@ -93,6 +93,8 @@ function makeRequire(options = {}) {
     IconChevronDownOutlineRegular: () => ({}),
     IconChevronRightOutlineRegular: () => ({}),
     IconCheckOutlineRegular: () => ({}),
+    // The official menu: this plugin hands it the rows and owns nothing else.
+    Menu: () => null,
     SettingsForm: () => null,
   }
   const React = options.React ?? {
@@ -133,6 +135,7 @@ function readyValue(value = { models: [] }, revision = 1) {
 function makeCtx(options = {}) {
   const state = { injected: [], registered: [], locales: [], effects: 0, served: [], read: [] }
   const writes = []
+  const sets = []
   const form = options.form ?? {
     state: readyValue(options.value),
     mutate: async (ops, expectedRevision) => { writes.push({ ops, expectedRevision }); return true },
@@ -143,7 +146,7 @@ function makeCtx(options = {}) {
   const handle = Object.assign({
     getSnapshot: () => form.state,
     subscribe: () => () => {},
-    set: async () => {},
+    set: async (field, value) => { sets.push({ field, value }); return true },
   }, form)
   const ctx = {
     slots: {
@@ -182,7 +185,7 @@ function makeCtx(options = {}) {
       ? { modelCatalog: options.modelCatalog ?? (async () => ({ ok: true, value: { groups: [] } })) }
       : undefined),
   }
-  return { ctx, state, form, writes }
+  return { ctx, state, form, writes, sets }
 }
 
 function makeHookRunner() {
@@ -281,7 +284,7 @@ test('registers the row configuration page and the composer control', () => {
   assert.equal(state.effects, 2, 'one effect for the dictionaries and one for the page gate')
 })
 
-test('uses the right-side slot and matches official nested-menu structure', () => {
+test('builds the composer menu from the official primitive and re-implements nothing', () => {
   const source = readFileSync(new URL('../src/client.ts', import.meta.url), 'utf8')
   const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.doesNotMatch(source, /conversation\.input\.left/)
@@ -289,16 +292,74 @@ test('uses the right-side slot and matches official nested-menu structure', () =
   assert.doesNotMatch(source, new RegExp(legacySummaryLabel))
   assert.match(source, /conversation\.input\.right/)
   assert.match(source, /摘要等级/)
-  assert.match(source, /\.rm-menu-cell \{ appearance: none; box-sizing: border-box; width: auto; min-width: 100%; height: 40px;/)
-  assert.match(source, /\.rm-menu-cell-value \{[^}]*text-align: right;[^}]*color: var\(--dsw-alias-label-tertiary\);[^}]*flex: auto;/)
-  assert.match(source, /\.rm-menu-cell-chevron \{ color: var\(--dsw-alias-label-tertiary\);/)
-  assert.match(source, /\.rm-menu-option \{ appearance: none; box-sizing: border-box; width: auto; min-width: 100%; min-height: 38px;/)
-  assert.doesNotMatch(source, /rm-menu-back/)
-  assert.doesNotMatch(source, /const back\s*=/)
-  assert.doesNotMatch(bundle, /rm-menu-back/)
-  assert.doesNotMatch(bundle, /back\(t\('modeLabel'\)\)/)
-  assert.doesNotMatch(bundle, /back\(t\('summaryLabel'\)\)/)
-  assert.match(bundle, /rm-menu-cell-value[^}]*label-tertiary/)
+  // The nested cards, the placement, the portal, outside click, Escape, the
+  // arrow walk and the focus return are the official Menu's (contract fact 7).
+  assert.match(source, /^\s+Menu,$/m)
+  assert.match(source, /return e\(Menu, \{/)
+  assert.match(source, /listClassName: 'rm-control-menu'/)
+  assert.match(source, /side: 'top'/)
+  assert.match(source, /align: 'end'/)
+  assert.match(source, /portal: true/)
+  assert.match(source, /submenu,/)
+  assert.match(source, /onSelect: update/)
+  assert.match(source, /'mode:pro': \{ mode: 'pro' \}/)
+  assert.match(source, /'summary:detailed': \{ summary: 'detailed' \}/)
+  // A nested row carries only icon, label and shortcut, so the leaf's mark
+  // stays inside the label; the primitive draws primary-row checks itself.
+  assert.match(source, /rm-option-check/)
+  assert.match(source, /\.rm-cell-value \{[^}]*margin-left: auto;/)
+  // Nothing here re-implements what the primitive owns.
+  assert.doesNotMatch(source, /rm-menu|createPortal|ReactDOM|mousedown|useLayoutEffect|getBoundingClientRect|aria-controls/)
+  assert.doesNotMatch(bundle, /rm-menu|createPortal|ReactDOM|mousedown|getBoundingClientRect/)
+  assert.match(bundle, /rm-cell-value[^}]*label-tertiary/)
+  assert.match(bundle, /rm-option-check/)
+})
+
+test('hands the official Menu two cells whose leaves are the only writes', async () => {
+  const runner = makeHookRunner()
+  const { require, primitives, requested } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  const route = { provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }
+  const { ctx, state, sets } = makeCtx({ value: { models: [route] } })
+  plugin.apply(ctx)
+  // react-dom went with the hand-written portal.
+  assert.equal(requested.includes('react-dom'), false)
+
+  const menuElement = renderRegistered(runner, state.registered[1], {
+    sessionId: 'session-1',
+    useProjection: () => ({ next: { provider: 'provider-a', model: 'model-a' }, lastUsed: null }),
+  })
+  runner.flushEffects()
+  assert.equal(menuElement.component, primitives.Menu, 'the control renders the official Menu primitive')
+  const menu = menuElement.props
+  assert.equal(menu.open, false)
+  assert.equal(menu.side, 'top')
+  assert.equal(menu.align, 'end')
+  assert.equal(menu.portal, true)
+  assert.equal(menu.className, 'rm-control-root')
+  assert.equal(menu.listClassName, 'rm-control-menu')
+  // Two submenu parents; every leaf carries the patch the primitive hands back.
+  assert.deepEqual(menu.items.map((item) => item.id), ['cell:mode', 'cell:summary'])
+  assert.deepEqual(menu.items[0].submenu.map((row) => row.id), ['mode:standard', 'mode:pro'])
+  assert.deepEqual(menu.items[1].submenu.map((row) => row.id), ['summary:auto', 'summary:concise', 'summary:detailed'])
+  // The trigger stays the anchor the primitive returns focus to.
+  assert.equal(menu.anchor.props['aria-haspopup'], 'menu')
+  assert.equal(menu.anchor.props['aria-expanded'], false)
+  assert.equal(menu.anchor.props.disabled, false)
+
+  menu.onSelect('summary:concise')
+  await settle()
+  // Live, unstaged: one field write carrying the whole patched route list.
+  assert.deepEqual(sets, [{
+    field: 'models',
+    value: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'concise' }],
+  }])
+  // A submenu parent and an unknown id select nothing.
+  menu.onSelect('cell:mode')
+  menu.onSelect('summary:unknown')
+  await settle()
+  assert.equal(sets.length, 1)
+  assert.equal(typeof menu.onClose, 'function')
 })
 
 test('declares the page services and the conversation client dependencies', () => {
