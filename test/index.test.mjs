@@ -5,43 +5,51 @@ import {
   apply,
   applyReasoningBody,
   isResponsesRequest,
+  normalizeModels,
   resolveRouteCandidate,
   Config,
   inject,
   name,
 } from '../lib/index.js'
 
-test('exports the host contract with the settings service as its only dependency', () => {
+test('exports the host contract with no required service', () => {
   assert.equal(name, 'reasoning-mode')
-  assert.deepEqual(inject, ['settings'])
+  assert.deepEqual(inject, [])
   assert.equal(typeof apply, 'function')
 })
 
-test('serializes a self-contained settings transform callback', () => {
+test('normalizes a stored route list: unusable entries, duplicate routes, and unknown enums', () => {
+  assert.deepEqual(normalizeModels([
+    { provider: 'p', model: 'm', mode: 'pro', summary: 'concise' },
+    { provider: 'p', model: 'm', mode: 'standard', summary: 'auto' },
+    { provider: 'q', model: 'n' },
+    { provider: '', model: 'n' },
+    { provider: 'q', model: '' },
+    { provider: 'q' },
+    null,
+    'nope',
+  ]), [
+    { provider: 'p', model: 'm', mode: 'pro', summary: 'concise' },
+    { provider: 'q', model: 'n', mode: 'standard', summary: 'auto' },
+  ])
+  assert.deepEqual(normalizeModels(undefined), [])
+})
+
+// The loader keeps `volatile` fields live: it hands `apply` a box whose `get()`
+// answers the current value and re-reads it on every load, instead of freezing
+// the document value captured at activation. schemastery records the marker as
+// `meta.volatile` on the field's own ref (measured on 3.18.4, the version the
+// host and the official plugins resolve).
+test('declares the route list as a volatile field so the loader owns live values', () => {
   const envelope = Config.toJSON()
-  const transform = envelope.refs[String(envelope.uid)]
+  const refs = envelope.refs
+  const root = refs[envelope.uid]
+  const routes = refs[root.dict.models]
 
-  assert.equal(transform.type, 'transform')
-  assert.equal(typeof transform.callback, 'string')
-  assert.doesNotMatch(transform.callback, /normalizeModels/)
-
-  // This is the same rehydration mechanism used by the browser settings client.
-  const callback = new Function(`return ${transform.callback}`)()
-  assert.equal(typeof callback, 'function')
-  assert.deepEqual(callback({
-    defaultMode: 'pro',
-    defaultSummary: 'detailed',
-    models: [
-      { provider: 'p', model: 'm', mode: 'pro', summary: 'concise' },
-      { provider: 'p', model: 'm', mode: 'standard', summary: 'auto' },
-      { provider: 'q', model: 'n' },
-    ],
-  }), {
-    models: [
-      { provider: 'p', model: 'm', mode: 'pro', summary: 'concise' },
-      { provider: 'q', model: 'n', mode: 'standard', summary: 'auto' },
-    ],
-  })
+  assert.equal(routes.type, 'array')
+  assert.equal(routes.meta.volatile, true, 'a non-volatile route list would freeze the value captured at apply time')
+  // The item schema is the four fields the host half normalizes on read.
+  assert.deepEqual(Object.keys(refs[routes.inner].dict), ['provider', 'model', 'mode', 'summary'])
 })
 
 test('applies mode and summary while retaining existing reasoning fields', () => {
@@ -89,27 +97,20 @@ test('rewrites an active Responses request and restores fetch on disposal', { co
   }
   globalThis.fetch = stubFetch
 
-  let watchCallback
-  const settingsScope = {
-    get: () => ({
-      models: [{ provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'concise' }],
-    }),
-    watch: (callback) => { watchCallback = callback; return () => {} },
-  }
+  // A stand-in for the loader's volatile reference: reading it once per request
+  // is what makes a saved settings write effective without re-applying.
+  let stored = [{ provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'concise' }]
+  const config = { models: { get: () => stored } }
   const listeners = []
   const disposers = []
   const ctx = {
-    settings: {
-      register: () => settingsScope,
-    },
     on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
     effect: (callback) => { const disposer = callback(); disposers.push(disposer); return disposer },
     logger: { warn: () => {} },
   }
 
   try {
-    apply(ctx)
-    assert.equal(typeof watchCallback, 'function')
+    apply(ctx, config)
     const streamListener = listeners.find((entry) => entry.name === 'llm/stream').listener
     const stream = streamListener({
       provider: 'cotton-codex-plus',
@@ -132,6 +133,25 @@ test('rewrites an active Responses request and restores fetch on disposal', { co
     assert.equal(calls[0].init.headers['content-length'], undefined)
     assert.equal(calls[0].init.headers['x-preserve'], 'yes')
 
+    // Liveness: the value the settings page wrote after apply must reach the next
+    // request through the same volatile reference, with no re-apply and no subscription.
+    stored = [{ provider: 'cotton-codex-plus', model: 'gpt-5.6-luna' }]
+    const nextStream = streamListener({
+      provider: 'cotton-codex-plus',
+      model: 'gpt-5.6-luna',
+      sessionId: 'session-plus',
+    }, () => (async function* () {
+      yield { type: 'finish' }
+    })())
+    await globalThis.fetch('https://api.cottonapi.cloud/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-client-request-id': 'session-plus' },
+      body: JSON.stringify({ model: 'gpt-5.6-luna', stream: true }),
+    })
+    await nextStream.next()
+    assert.equal(calls.length, 2)
+    assert.deepEqual(JSON.parse(calls[1].init.body).reasoning, { mode: 'standard', summary: 'auto' })
+
     const beforeBypass = calls.length
     await globalThis.fetch('https://api.cottonapi.cloud/v1/models', { method: 'GET' })
     assert.equal(calls.length, beforeBypass + 1)
@@ -150,22 +170,18 @@ test('rewrites a native Request body, preserves request fields, and removes stal
     return { ok: true }
   }
   globalThis.fetch = stubFetch
-  const settingsScope = {
-    get: () => ({
-      models: [{ provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'detailed' }],
-    }),
-    watch: () => () => {},
+  const config = {
+    models: { get: () => [{ provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'detailed' }] },
   }
   const listeners = []
   const disposers = []
   const ctx = {
-    settings: { register: () => settingsScope },
     on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
     effect: (callback) => { const disposer = callback(); disposers.push(disposer); return disposer },
     logger: { warn: () => {} },
   }
   try {
-    apply(ctx)
+    apply(ctx, config)
     const streamListener = listeners.find((entry) => entry.name === 'llm/stream').listener
     const stream = streamListener({
       provider: 'cotton-codex-plus',
@@ -232,25 +248,23 @@ test('uses request affinity to select the exact provider among concurrent same-m
     return { ok: true }
   }
   globalThis.fetch = stubFetch
-  const settingsScope = {
-    get: () => ({
-      models: [
+  const config = {
+    models: {
+      get: () => [
         { provider: 'cotton-codex', model: 'gpt-5.6-luna', mode: 'standard', summary: 'concise' },
         { provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'detailed' },
       ],
-    }),
-    watch: () => () => {},
+    },
   }
   const listeners = []
   const disposers = []
   const ctx = {
-    settings: { register: () => settingsScope },
     on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
     effect: (callback) => { const disposer = callback(); disposers.push(disposer); return disposer },
     logger: { warn: () => {} },
   }
   try {
-    apply(ctx)
+    apply(ctx, config)
     const streamListener = listeners.find((entry) => entry.name === 'llm/stream').listener
     const streamA = streamListener({
       provider: 'cotton-codex',
@@ -299,27 +313,25 @@ test('does not rewrite an ambiguous same-model request and restores after stream
     return { ok: true }
   }
   globalThis.fetch = stubFetch
-  const settingsScope = {
-    get: () => ({
-      models: [
+  const config = {
+    models: {
+      get: () => [
         { provider: 'cotton-codex', model: 'gpt-5.6-luna', mode: 'standard', summary: 'auto' },
         { provider: 'cotton-codex-plus', model: 'gpt-5.6-luna', mode: 'pro', summary: 'detailed' },
         { provider: 'cotton-codex-enterprise', model: 'gpt-5.6-luna', mode: 'standard', summary: 'concise' },
       ],
-    }),
-    watch: () => () => {},
+    },
   }
   const listeners = []
   const disposers = []
   const warnings = []
   const ctx = {
-    settings: { register: () => settingsScope },
     on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
     effect: (callback) => { const disposer = callback(); disposers.push(disposer); return disposer },
     logger: { warn: (message) => warnings.push(String(message)) },
   }
   try {
-    apply(ctx)
+    apply(ctx, config)
     const streamListener = listeners.find((entry) => entry.name === 'llm/stream').listener
     const streamA = streamListener({
       provider: 'cotton-codex',

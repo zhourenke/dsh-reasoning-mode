@@ -22,7 +22,7 @@ DSH 自带 adapter 提供的 `reasoningEffort`（每个模型的推理档位）�
 dsh plugin --profile web add "github:zhourenke/dsh-reasoning-mode"
 ```
 
-安装后需要**重启 DSH 并刷新页面**，在 **设置 → 插件 → 推理模式** 可以看到本插件的设置卡片。
+安装后需要**重启 DSH 并刷新页面**（宿主半边在进程启动时装载，浏览器半边在插件激活时取一次产物），然后在 **设置 → 插件 → `@zhourenke/dsh-reasoning-mode` → `reasoning-mode` 行的「配置」** 打开本插件的配置页。
 
 卸载：
 
@@ -32,34 +32,31 @@ dsh plugin --profile web remove @zhourenke/dsh-reasoning-mode
 
 ## 快速上手
 
-1. 打开 **设置 → 插件 → 推理模式**，在模型目录里勾选要让插件改写的 `provider/model`，点**保存**。
+1. 打开 **设置 → 插件 → `@zhourenke/dsh-reasoning-mode`**，在该行点**配置**，在模型目录里勾选要让插件改写的 `provider/model`，点**保存**。
 2. 打开一个会话，在模型选择器中把模型切到刚才勾选的路由。
-3. 在右侧出现的标签中选择想要的 **推理模式** 与 **摘要等级**。
+3. 在输入栏右侧出现的标签中选择想要的 **推理模式** 与 **摘要等级**。
 
 新勾选的路由默认 `Standard` + `Auto`；取消勾选再重新勾选会保留原来的值。
 
-也可以直接编辑 `~/.dsh/settings.yaml`：
-
-```yaml
-# ~/.dsh/settings.yaml
-reasoning-mode:
-  models:
-    - provider: <provider-id>
-      model: <model-id>
-      mode: pro
-      summary: detailed
-```
-
-id 写错的条目不会报错，只是不生效（在设置卡片里勾选就不会写错）。
-
-配置保存即生效。
+配置保存即生效，**不需要重启**：本插件的配置存在 profile 补丁层里，而补丁层是热重载的。
 
 ## 配置
 
-`~/.dsh/settings.yaml` 里本插件只占一个顶层键 `reasoning-mode`：
+配置的落点是 **web profile 的补丁层** `<harness home>/profiles/web/cordis.patch.yml`，挂在 `reasoning-mode` 这一行下面：
+
+```yaml
+- id: reasoning-mode
+  name: '@zhourenke/dsh-reasoning-mode'
+  config:
+    models:
+      - provider: <provider-id>
+        model: <model-id>
+        mode: pro
+        summary: detailed
+```
 
 | 字段 | 类型 | 默认 | 说明 |
-|---|---|:---:|---|
+|---|---|---|:---:|---|
 | `models` | array | `[]` | 要改写的路由列表，每项为 `{ provider, model, mode, summary }`。**空列表是唯一的关闭状态**。 |
 | `models[].provider` | string | 无 | provider id，必须与目录里的 id 逐字一致。 |
 | `models[].model` | string | 无 | model id，同样逐字一致。 |
@@ -68,11 +65,12 @@ id 写错的条目不会报错，只是不生效（在设置卡片里勾选就�
 
 - `provider` 与 `model` 必须**同时**匹配；同一个 model 挂在另一个 provider 下不会命中那条路由。
 - 缺失或写错的 `mode` / `summary` 会在读取时归一化回 `standard` / `auto`，不会导致加载失败；完全相同的 `provider`+`model` 重复条目会被去重。
+- id 写错的条目不会报错，只是不生效（在配置页里勾选就不会写错）。
 - 目录里当前不存在的已保存路由会保留在「已保存但当前不可用」分组里，手动取消勾选并保存后会消失。
 
 ## 兼容性
 
-在 **DSH v0.1.5-rc.1**（2026-09）下测试通过。
+在 **DSH v0.1.7-rc.2**（2026-09）下测试通过。
 
 ## 许可证
 

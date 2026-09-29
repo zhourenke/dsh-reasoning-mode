@@ -22,7 +22,7 @@ GPT models that speak the OpenAI Responses protocol. Models on Chat Completions,
 dsh plugin --profile web add "github:zhourenke/dsh-reasoning-mode"
 ```
 
-After installing, **restart DSH and refresh the page**; the plugin's settings card appears under **Settings → Plugins → Reasoning mode**.
+After installing, **restart DSH and refresh the page** (the host half is loaded when the process starts, and the browser half snapshots its bundle when the plugin activates). The plugin's configuration page then lives under **Settings → Plugins → `@zhourenke/dsh-reasoning-mode` → the `reasoning-mode` row's Configure control**.
 
 Uninstall:
 
@@ -32,34 +32,31 @@ dsh plugin --profile web remove @zhourenke/dsh-reasoning-mode
 
 ## Quick start
 
-1. Open **Settings → Plugins → Reasoning mode**, check the `provider/model` routes this plugin should rewrite, and click **Save**.
+1. Open **Settings → Plugins → `@zhourenke/dsh-reasoning-mode`**, click **Configure** on that row, check the `provider/model` routes this plugin should rewrite, and click **Save**.
 2. Open a conversation and switch the model to one of the checked routes in the model selector.
 3. Pick the **reasoning mode** and the **summary level** you want in the label that appears on the right.
 
 A newly checked route starts at `Standard` + `Auto`; unchecking and checking it again keeps the values you had set.
 
-You can also edit `~/.dsh/settings.yaml` directly:
-
-```yaml
-# ~/.dsh/settings.yaml
-reasoning-mode:
-  models:
-    - provider: <provider-id>
-      model: <model-id>
-      mode: pro
-      summary: detailed
-```
-
-An entry with a mistyped id raises no error; it simply never applies (checking boxes in the settings card avoids typos).
-
-Configuration applies as soon as it is saved.
+Saving applies immediately and **needs no restart**: this plugin's configuration lives in the profile patch layer, which is hot-reloaded.
 
 ## Configuration
 
-The plugin owns exactly one top-level key in `~/.dsh/settings.yaml`, `reasoning-mode`:
+The configuration lives in the **web profile's patch layer**, `<harness home>/profiles/web/cordis.patch.yml`, attached to the `reasoning-mode` row:
+
+```yaml
+- id: reasoning-mode
+  name: '@zhourenke/dsh-reasoning-mode'
+  config:
+    models:
+      - provider: <provider-id>
+        model: <model-id>
+        mode: pro
+        summary: detailed
+```
 
 | Field | Type | Default | Meaning |
-|---|---|:---:|---|
+|---|---|---|:---:|---|
 | `models` | array | `[]` | Routes to rewrite; each item is `{ provider, model, mode, summary }`. **An empty list is the only off switch**. |
 | `models[].provider` | string | none | Provider id, character-for-character identical to the catalog. |
 | `models[].model` | string | none | Model id, likewise exact. |
@@ -68,11 +65,12 @@ The plugin owns exactly one top-level key in `~/.dsh/settings.yaml`, `reasoning-
 
 - `provider` and `model` must match **together**; the same model under another provider does not hit that route.
 - A missing or invalid `mode` / `summary` is normalized back to `standard` / `auto` when read and never fails loading; identical `provider`+`model` duplicates are removed.
+- An entry with a mistyped id raises no error; it simply never applies (checking boxes in the configuration page avoids typos).
 - Saved routes that are absent from the catalog stay listed under "saved but currently unavailable"; manual unchecking and saving removes them.
 
 ## Compatibility
 
-Tested with **DSH v0.1.5-rc.1** (2026-09).
+Tested with **DSH v0.1.7-rc.2** (2026-09).
 
 ## License
 

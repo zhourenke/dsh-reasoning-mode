@@ -5,35 +5,45 @@ import vm from 'node:vm'
 
 // ---------------------------------------------------------------------------
 // The host contracts this file models, as measured from the installed
-// 0.1.5-rc.1 packages. Keep the citations when editing: a mock that drifts from
+// 0.1.7-rc.2 packages. Keep the citations when editing: a mock that drifts from
 // the real contract hides defects instead of catching them (a "false green" —
 // see PLUGIN_RELEASE_GUIDE.md -> guide/verification-method.md "验证本身也会骗你").
 //
-// 1. The card seat `settings.plugin.item` is declared at RUNTIME by the Plugins
-//    settings section, not by the settings domain package:
-//      @deepseek-ai/dsh-client-ui-settings-plugins/lib/types/client/slot-contract.d.ts
-//        'settings.plugin.item': { kind: 'keyed'; scope: 'root';
-//                                  owner: SettingsPluginItemOwnerProps }
-//    `SettingsPluginItemOwnerProps` is a marker (`children?: never`), i.e. the
-//    section passes NO props of its own — every value the card needs must arrive
-//    through the plugin's own `inject()` face.
+// 1. Our row's configuration page is the seat `plugins.row.config`, declared by
+//    the plugins page (not by our plugin, and not by the settings domain):
+//      @deepseek-ai/dsh-client-ui-plugin-manager/lib/types/client/slot-contract.d.ts
+//        'plugins.row.config': { kind: 'keyed'; scope: 'root';
+//                                owner: PluginConfigViewProps }
+//    It is keyed by `<package name>#<row id>` with the row id as the bundle's
+//    patch declares it, so the key is
+//    `@zhourenke/dsh-reasoning-mode#reasoning-mode`. The owner renders the entry
+//    twice: `view: 'summary'` for the row's one-liner (also the fallback when the
+//    row has no description) and `view: 'page'`, with the Host form, for the body
+//    of the entry's own page. The page draws the title, icon, and crumb itself.
 //
-// 2. Registration shape, taken from that package's own client.js: the
-//    `settings.plugin.item` slot is claimed under the settings namespace the
-//    Host half registers (`settings.register(SETTINGS_NAMESPACE, Config)` in
-//    src/index.ts), and dispatch is by that namespace's intersection with the
-//    registered cards.
+// 2. Registration shape: the page is registered only while the Host serves our
+//    namespace, i.e. inside `ctx.configForms.whileServed([NS], …)` (the owner
+//    passes no form to a page whose namespace it cannot serve), and the service
+//    is read as `ctx.configForms.get(NS)`.
 //
-// 3. `ctx.settingsScope.bind(spec)` takes `{ namespace, decode? }` and returns a
-//    scope whose measured surface is getSnapshot / subscribe / set / unset /
-//    mutate, over a snapshot of
-//      { status: 'loading' | 'ready' | 'unavailable', value, base, user,
-//        revision, writable, mode }
-//    (dsh-client-ui-settings/lib/types/client/settings-contract.d.ts). The card
-//    returns null unless `status === 'ready'`, so an unanswered Host renders
-//    nothing rather than an empty card.
+// 3. `ConfigPageForm` is the Host's write path for that entry
+//    (same package, slot-contract.d.ts:150):
+//      { state: ConfigFormSnapshot<Record<string, unknown>>,   // accepted values
+//        mutate(ops, expectedRevision?): Promise<boolean> }    // revision-fenced
+//    `ConfigFormSnapshot` comes from '@deepseek-ai/dsh-client-ui-settings/client'
+//    and exposes { status: 'loading' | 'ready' | 'unavailable', value, base, user,
+//    revision, writable, mode }. The page returns null unless status is 'ready',
+//    so an unanswered Host renders nothing rather than an empty form, and it
+//    commits the whole route list with one `set ['models']` write carrying the
+//    revision it staged against.
 //
-// 4. `remote.session.modelCatalog()` resolves the Host-generation model catalog
+// 4. The frame, the Save/Discard controls and the failure notice belong to the
+//    official form primitive (`@deepseek-ai/dsh-client-ui-primitives`
+//    SettingsForm), which the plugin feeds with its own labels
+//    (unavailable / readOnly / saveFailed / save / saving) and shell state
+//    (available / writable / dirty / invalid / saving / failed).
+//
+// 5. `remote.session.modelCatalog()` resolves the Host-generation model catalog
 //    (`dsh-api-session-controller/lib/types/types.d.ts` ModelCatalog:
 //    `default: ModelSelection` is the model used by unconfigured Sessions).
 //    The official composer model seat renders `projected.next ??
@@ -43,7 +53,7 @@ import vm from 'node:vm'
 //    is the RPC result shape that `ModelCatalogDirectory.load()` checks
 //    (`response.ok` before reading `response.value`).
 //
-// 5. `sessionId` and `useProjection` reach the slot from the built-in session
+// 6. `sessionId` and `useProjection` reach the slot from the built-in session
 //    standard source (`dsh-client-ui-session/lib/client.js` BUILTIN_SOURCE:
 //    `props: ['sessionId']`, `keyedHooks: ['projection']`), so
 //    `conversation.input.right` occupants can read both even though the slot's
@@ -52,11 +62,11 @@ import vm from 'node:vm'
 //
 // NOT modelled here: React's reconciler and full hook semantics (the default
 // stub only invokes lazy state initializers and memo callbacks), the host's real
-// slot registry, and the tab that dispatches the slot. The focused fallback
-// tests below use a small state/effect runner only to model the two rerenders
-// that matter for the session default route; it is not a replacement for React.
-// This file proves the plugin's side of the contract; the Host's side is proven
-// by the card appearing in a running deployment.
+// slot registry, and the page that dispatches the slots. The focused tests below
+// use a small state/effect runner only to model the rerenders that matter; it is
+// not a replacement for React. This file proves the plugin's side of the
+// contract; the Host's side is proven by the page appearing in a running
+// deployment.
 // ---------------------------------------------------------------------------
 
 // The browser half is a plain script: it registers itself through
@@ -73,11 +83,18 @@ const definition = definitions[0]
 /**
  * Build a factory `require` that satisfies the modules the browser half
  * imports. `elements` records every `createElement` call, which is how a test
- * observes what the card would render.
+ * observes what the page would render, and `primitives` is the stub the source
+ * destructures, so a test can recognise the official form element.
  */
 function makeRequire(options = {}) {
   const requested = []
   const elements = []
+  const primitives = {
+    IconChevronDownOutlineRegular: () => ({}),
+    IconChevronRightOutlineRegular: () => ({}),
+    IconCheckOutlineRegular: () => ({}),
+    SettingsForm: () => null,
+  }
   const React = options.React ?? {
     createElement: (component, props, ...children) => {
       const element = { component, props, children }
@@ -88,45 +105,46 @@ function makeRequire(options = {}) {
     useLayoutEffect: () => {},
     useMemo: (fn) => fn(),
     useRef: () => ({ current: null }),
-    // React invokes a function initial state lazily; the card relies on it to
-    // copy the saved selection out of the snapshot.
+    // React invokes a function initial state lazily; the page relies on it to
+    // copy the accepted selection out of the Host form.
     useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
   }
   const require = (id) => {
     requested.push(id)
     if (id === 'react') return React
-    if (id === '@deepseek-ai/dsh-client-ui-primitives') {
-      return {
-        IconChevronDownOutline14: () => ({}),
-        IconChevronRightOutline14: () => ({}),
-        IconCheckOutline16: () => ({}),
-        Tag: (props) => props?.children ?? null,
-      }
-    }
+    if (id === '@deepseek-ai/dsh-client-ui-primitives') return primitives
     if (id === 'react-dom') return { createPortal: (node) => node }
     throw new Error(`unexpected dependency: ${id}`)
   }
-  return { require, requested, elements }
+  return { require, requested, elements, primitives }
 }
 
-/** A `ready` snapshot with no saved model routes — the shape the Host serves. */
-function readySnapshot(value = { models: [] }) {
-  return { status: 'ready', value, writable: true }
+/** A `ready` Host-form snapshot with no accepted model routes. */
+function readyValue(value = { models: [] }, revision = 1) {
+  return { status: 'ready', value, writable: true, revision }
 }
 
 /**
  * Minimal stand-in for the client services the browser half touches, shaped
- * after the measured contracts above. `options.snapshot` overrides the settings
- * snapshot the card reads.
+ * after the measured contracts above. `options.form` overrides the Host form
+ * the page owner would hand the row's page; `options.value` seeds the accepted
+ * values of the default one.
  */
 function makeCtx(options = {}) {
-  const state = { injected: [], registered: [], locales: [], effects: 0, bindSpecs: [] }
-  const snapshot = options.snapshot ?? readySnapshot(options.value)
-  const scope = {
-    getSnapshot: () => snapshot,
+  const state = { injected: [], registered: [], locales: [], effects: 0, served: [], read: [] }
+  const writes = []
+  const form = options.form ?? {
+    state: readyValue(options.value),
+    mutate: async (ops, expectedRevision) => { writes.push({ ops, expectedRevision }); return true },
+  }
+  // The Host serves one object to both faces: the page reads `state` + `mutate`
+  // (contract fact 3) while the composer control reads the live ConfigForm
+  // surface (getSnapshot / subscribe / set) off the same namespace.
+  const handle = Object.assign({
+    getSnapshot: () => form.state,
     subscribe: () => () => {},
     set: async () => {},
-  }
+  }, form)
   const ctx = {
     slots: {
       inject(name, callback) {
@@ -138,10 +156,14 @@ function makeCtx(options = {}) {
         return () => {}
       },
     },
-    settingsScope: {
-      bind: (spec) => {
-        state.bindSpecs.push(spec)
-        return scope
+    configForms: {
+      get: (namespace) => {
+        state.read.push(namespace)
+        return handle
+      },
+      whileServed: (namespaces, callback) => {
+        state.served.push(...namespaces)
+        return callback()
       },
     },
     locale: {
@@ -160,13 +182,14 @@ function makeCtx(options = {}) {
       ? { modelCatalog: options.modelCatalog ?? (async () => ({ ok: true, value: { groups: [] } })) }
       : undefined),
   }
-  return { ctx, state, scope }
+  return { ctx, state, form, writes }
 }
 
 function makeHookRunner() {
   const state = []
   const dependencies = []
   const cleanups = []
+  const elements = []
   let hookIndex = 0
   let pendingEffects = []
 
@@ -185,7 +208,11 @@ function makeHookRunner() {
 
   const React = {
     Fragment: () => null,
-    createElement: (component, props, ...children) => ({ component, props, children }),
+    createElement: (component, props, ...children) => {
+      const element = { component, props, children }
+      elements.push(element)
+      return element
+    },
     useEffect: schedule,
     useLayoutEffect: schedule,
     useMemo: (fn) => {
@@ -209,6 +236,7 @@ function makeHookRunner() {
 
   return {
     React,
+    elements,
     render(component, props) {
       hookIndex = 0
       pendingEffects = []
@@ -232,35 +260,25 @@ function renderRegistered(runner, registration, props) {
   }, props)
 }
 
-test('registers the reasoning settings card and composer control', () => {
-  const registered = []
-  const injected = []
-  const locale = {
-    register: () => () => {},
-    bind: () => (key) => key,
-  }
-  const scope = {
-    getSnapshot: () => ({ status: 'ready', value: { models: [] }, writable: true }),
-    subscribe: () => () => {},
-    set: async () => {},
-  }
-  const ctx = {
-    slots: {
-      inject: (name, callback) => { injected.push(name); callback() },
-      register: (options, renderer) => { registered.push({ options, renderer }); return () => {} },
-    },
-    settingsScope: { bind: () => scope },
-    locale,
-    effect: (callback) => callback(),
-    get: (name) => name === 'remote.session' ? { modelCatalog: async () => ({ ok: true, value: { groups: [] } }) } : undefined,
-  }
-  const plugin = definition.factory(makeRequire().require)
+const settle = async () => {
+  await Promise.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
+test('registers the row configuration page and the composer control', () => {
+  const { require } = makeRequire()
+  const plugin = definition.factory(require)
+  const { ctx, state } = makeCtx()
   plugin.apply(ctx)
 
-  assert.deepEqual(injected, ['settings.plugin.item', 'conversation.input.right'])
-  assert.deepEqual(registered.map((item) => item.options.name), ['settings.plugin.item', 'conversation.input.right'])
-  assert.equal(registered[0].options.key, 'reasoning-mode')
-  assert.equal(registered[1].options.id, 'reasoning-mode')
+  assert.deepEqual(state.injected, ['plugins.row.config', 'conversation.input.right'])
+  assert.deepEqual(state.registered.map((item) => item.slotDefinition.name), ['plugins.row.config', 'conversation.input.right'])
+  assert.equal(state.registered[0].slotDefinition.key, '@zhourenke/dsh-reasoning-mode#reasoning-mode')
+  assert.equal(state.registered[1].slotDefinition.id, 'reasoning-mode')
+  // The page must not exist unless the Host serves the namespace it configures.
+  assert.deepEqual(state.served, ['reasoning-mode'])
+  assert.deepEqual(state.read, ['reasoning-mode'])
+  assert.equal(state.effects, 2, 'one effect for the dictionaries and one for the page gate')
 })
 
 test('uses the right-side slot and matches official nested-menu structure', () => {
@@ -283,60 +301,144 @@ test('uses the right-side slot and matches official nested-menu structure', () =
   assert.match(bundle, /rm-menu-cell-value[^}]*label-tertiary/)
 })
 
-test('declares both the settings and conversation client dependencies', () => {
+test('declares the page services and the conversation client dependencies', () => {
   const plugin = definition.factory(makeRequire().require)
-  assert.deepEqual(plugin.inject, ['slots', 'settingsScope', 'locale', 'remote', 'remote.session'])
+  assert.deepEqual(plugin.inject, ['slots', 'configForms', 'locale', 'remote', 'remote.session'])
 })
 
-test('keeps settings models-only and uses checkbox-only catalog rows', () => {
+test('keeps the page models-only and uses checkbox-only catalog rows', () => {
   const source = readFileSync(new URL('../src/client.ts', import.meta.url), 'utf8')
   const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 
   assert.match(source, /value\?: \{ models\?: Selection\[\] \}/)
-  assert.match(source, /set\(field: string, value: unknown\): Promise<void>/)
-  assert.match(source, /scope\.set\('models', draftModels\)/)
   assert.match(source, /scope\.set\('models', next\)/)
+  // The whole list is staged locally and committed as one revision-fenced write.
+  assert.match(source, /form\.mutate\(\[\{ op: 'set', path: \['models'\], value: draftModels \}\], revision\)/)
   assert.match(source, /modelsHint: '只有勾选的 provider\/model 会改变 Responses 请求；未出现在目录中的已保存路由仍会保留。'/)
   assert.match(source, /\.rm-models \{[^}]*max-height: 280px;/)
   assert.match(source, /\.rm-model \{[^}]*grid-template-columns: auto minmax\(0, 1fr\) auto;/)
   assert.match(source, /Keep saved routes in the staged candidate set until Save commits an uncheck/)
   assert.match(source, /for \(const item of effective\.values\(\)\)/)
-  assert.doesNotMatch(source, /\bdefaultMode\b|\bdefaultSummary\b|\bdraftMode\b|\bdraftSummary\b|scope\.mutate/)
+  // The frame, its save control and its failure notice are the official form's.
+  assert.match(source, /return e\(SettingsForm, \{/)
+  assert.match(source, /unavailable: t\('formUnavailable'\)/)
+  assert.doesNotMatch(source, /rm-card|rm-head|rm-footer|rm-save|rm-discard|rm-chevron\b/)
+  assert.doesNotMatch(source, /\bdefaultMode\b|\bdefaultSummary\b|\bdraftMode\b|\bdraftSummary\b|scope\.mutate|scope\.set\('models', draftModels\)/)
   assert.doesNotMatch(source, /<select|rm-select|rm-defaults|routeHint|unavailableRoute/)
-  assert.doesNotMatch(bundle, /defaultMode|defaultSummary|scope\.mutate|rm-select|rm-defaults/)
+  assert.doesNotMatch(bundle, /defaultMode|defaultSummary|scope\.mutate|rm-select|rm-defaults|rm-card/)
 })
 
-test('the slot mount forwards the injected face to the card', () => {
+test('the slot mount forwards the injected face to the page', () => {
+  const { require, primitives, elements } = makeRequire()
+  const plugin = definition.factory(require)
+  const { ctx, state, form } = makeCtx()
+  plugin.apply(ctx)
+
+  // The owner passes only the view and the Host form (contract fact 1), so the
+  // render closure is what has to hand the page its translator and catalog face.
+  const element = state.registered[0].render({ view: 'page', form })
+  assert.equal(typeof element.component, 'function')
+
+  const page = element.component(element.props)
+  assert.ok(page, 'a ready Host form must render the page')
+  assert.equal(page.component, primitives.SettingsForm)
+  assert.ok(elements.length > 1, 'the page must build its own element tree')
+  assert.equal(elements[0].component, element.component)
+  assert.equal(element.props.t('description'), 'reasoning-mode:description')
+  assert.equal(typeof element.props.sessionFace, 'function')
+  // The Host form is the owner's; the page must not smuggle a scope of its own.
+  assert.equal(element.props.scope, undefined)
+})
+
+test('the page renders nothing until the Host answers with a ready form', () => {
   const { require, elements } = makeRequire()
   const plugin = definition.factory(require)
   const { ctx, state } = makeCtx()
   plugin.apply(ctx)
 
-  // The section passes no props of its own (contract fact 1), so the render
-  // closure is what has to hand the card its scope, translator and catalog
-  // face. React would call the returned element's component with these props.
-  const element = state.registered[0].render({})
-  assert.equal(typeof element.component, 'function')
-
-  const card = element.component(element.props)
-  assert.ok(card, 'a ready snapshot must render a card element')
-  assert.ok(elements.length > 1, 'the card must build its own element tree')
-  assert.equal(elements[0].component, element.component)
-  assert.equal(element.props.t('title'), 'reasoning-mode:title')
-  assert.equal(typeof element.props.sessionFace, 'function')
-  assert.ok(element.props.scope && typeof element.props.scope.getSnapshot === 'function')
+  const loading = { state: { status: 'loading', value: undefined, writable: true }, mutate: async () => false }
+  const element = state.registered[0].render({ view: 'page', form: loading })
+  const page = element.component(element.props)
+  assert.equal(page, null)
+  assert.equal(elements.length, 1, 'only the slot element itself may be created')
 })
 
-test('the card renders nothing until the Host answers with a ready snapshot', () => {
-  const { require, elements } = makeRequire()
+test('the page renders nothing when the owner serves no form at all', () => {
+  const { require } = makeRequire()
   const plugin = definition.factory(require)
-  const { ctx, state } = makeCtx({ snapshot: { status: 'loading', value: undefined, writable: true } })
+  const { ctx, state } = makeCtx()
+  plugin.apply(ctx)
+  const element = state.registered[0].render({ view: 'page' })
+  assert.equal(element.component(element.props), null)
+})
+
+test('the summary view is the row one-liner and never loads a catalog', async () => {
+  const runner = makeHookRunner()
+  const { require } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  let calls = 0
+  const { ctx, state } = makeCtx({
+    modelCatalog: async () => {
+      calls += 1
+      return { ok: true, value: { groups: [] } }
+    },
+  })
   plugin.apply(ctx)
 
-  const element = state.registered[0].render({})
-  const card = element.component(element.props)
-  assert.equal(card, null)
-  assert.equal(elements.length, 1, 'only the card element itself may be created')
+  const element = renderRegistered(runner, state.registered[0], { view: 'summary' })
+  runner.flushEffects()
+  await settle()
+
+  assert.equal(element.component, 'span')
+  assert.deepEqual(element.children, ['reasoning-mode:description'])
+  assert.equal(calls, 0, 'the one-liner must not read the model catalog')
+})
+
+test('stages the route list and commits it with one revision-fenced write', async () => {
+  const runner = makeHookRunner()
+  const { require, primitives } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  const writes = []
+  const { ctx, state, form } = makeCtx({
+    form: {
+      state: readyValue({ models: [] }, 7),
+      mutate: async (ops, expectedRevision) => { writes.push({ ops, expectedRevision }); return true },
+    },
+    modelCatalog: async () => ({
+      ok: true,
+      value: {
+        default: { provider: 'provider-a', model: 'model-a' },
+        groups: [{ id: 'provider-a', name: 'Provider A', models: [{ id: 'model-a', name: 'Model A' }] }],
+      },
+    }),
+  })
+  plugin.apply(ctx)
+
+  const props = { view: 'page', form }
+  renderRegistered(runner, state.registered[0], props)
+  runner.flushEffects()
+  await settle()
+  renderRegistered(runner, state.registered[0], props)
+
+  const row = runner.elements.filter((element) => element.component?.name === 'ModelRow').pop()
+  assert.ok(row, 'the catalog row must be rendered')
+  assert.equal(row.props.checked, false)
+  row.props.onToggle()
+  renderRegistered(runner, state.registered[0], props)
+
+  const shell = runner.elements.filter((element) => element.component === primitives.SettingsForm).pop()
+  assert.ok(shell, 'the official form must wrap the controls')
+  assert.equal(shell.props.state.dirty, true)
+  assert.equal(shell.props.state.writable, true)
+  assert.equal(shell.props.labels.save, 'reasoning-mode:save')
+
+  shell.props.onSave()
+  await settle()
+
+  assert.deepEqual(writes, [{
+    ops: [{ op: 'set', path: ['models'], value: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] }],
+    expectedRevision: 7,
+  }])
 })
 
 test('shows the composer control for a new session after the catalog supplies its default route', async () => {
@@ -345,7 +447,7 @@ test('shows the composer control for a new session after the catalog supplies it
   const plugin = definition.factory(require)
   let calls = 0
   const { ctx, state } = makeCtx({
-    snapshot: readySnapshot({ models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] }),
+    value: { models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] },
     modelCatalog: async () => {
       calls += 1
       return { ok: true, value: { default: { provider: 'provider-a', model: 'model-a' }, groups: [] } }
@@ -371,7 +473,7 @@ test('does not request a catalog or render the composer control without a sessio
   const plugin = definition.factory(require)
   let calls = 0
   const { ctx, state } = makeCtx({
-    snapshot: readySnapshot({ models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] }),
+    value: { models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] },
     modelCatalog: async () => {
       calls += 1
       return { ok: true, value: { default: { provider: 'provider-a', model: 'model-a' }, groups: [] } }
@@ -410,7 +512,7 @@ test('injects the stylesheet once and never replaces an existing one', () => {
     plugin.apply(makeCtx().ctx)
     assert.equal(created.length, 1)
     assert.equal(created[0].dataset.pluginCss, 'reasoning-mode')
-    assert.match(created[0].textContent, /\.rm-card/)
+    assert.match(created[0].textContent, /\.rm-models/)
 
     // A second activation must not duplicate the stylesheet.
     globalThis.document.querySelector = () => ({})

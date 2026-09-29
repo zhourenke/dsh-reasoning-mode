@@ -1,15 +1,21 @@
 /**
  * Browser face for @zhourenke/dsh-reasoning-mode.
  *
- * The settings card uses the configurable-plugin slot owned by DSH's official
- * settings surface: it stages changes locally and writes only on Save, while
- * the model catalog is read live from the host API. The card chrome and the
- * model list follow the sibling cards in the same settings page —
- * `PluginCard` and `SubagentModelSelectionCard` (`dsh-client-ui-settings-
- * plugins`) — so rows are checkbox-only and routes that vanished from the
- * catalog stay listed in a trailing "saved but currently unavailable" group
- * until Save removes them. Mode and summary are adjusted per route only from
- * the compact composer control in `conversation.input.right`.
+ * Two seats, both owned by official DSH surfaces:
+ *
+ * - Our installed row's configuration page is `plugins.row.config`, dispatched
+ *   by `<package name>#<row id>` and registered only while the Host serves the
+ *   `reasoning-mode` namespace. The plugins page supplies the Host form —
+ *   accepted values, the entry revision, and the revision-fenced write — and
+ *   draws the frame, the save control, and the failure notice itself, so this
+ *   component owns nothing but the catalog-driven route list. Changes are
+ *   staged locally and committed with a single revision-fenced `models` write.
+ * - Mode and summary are adjusted per route from the compact composer control in
+ *   `conversation.input.right`, which reads and writes the same namespace live.
+ *
+ * The route list follows the sibling cards of the same surface: rows are
+ * checkbox-only, and routes that vanished from the catalog stay listed in a
+ * trailing "saved but currently unavailable" group until Save removes them.
  */
 
 interface Window {
@@ -22,10 +28,17 @@ window.__ModuleLoader__.load({
   id: '@zhourenke/dsh-reasoning-mode',
   factory: (require) => {
     const NS = 'reasoning-mode'
+    /** Installed package name: the plugins page keys our row's page by `<package>#<row id>`. */
+    const PACKAGE_NAME = '@zhourenke/dsh-reasoning-mode'
     const React: any = require('react')
     const e = React.createElement
     const { useEffect, useLayoutEffect, useMemo, useRef, useState } = React
-    const { IconChevronDownOutline14, IconChevronRightOutline14, IconCheckOutline16, Tag } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const {
+      IconCheckOutlineRegular,
+      IconChevronDownOutlineRegular,
+      IconChevronRightOutlineRegular,
+      SettingsForm,
+    } = require('@deepseek-ai/dsh-client-ui-primitives')
     const ReactDOM: any = require('react-dom')
 
     type Mode = 'standard' | 'pro'
@@ -50,9 +63,16 @@ window.__ModuleLoader__.load({
       subscribe(listener: () => void): () => void
       set(field: string, value: unknown): Promise<void>
     }
+    /** The Host form the plugins page hands to our row's configuration page. */
+    type ConfigPageForm = {
+      state: Snapshot & { revision?: number }
+      mutate(
+        ops: ReadonlyArray<{ op: 'set'; path: readonly string[]; value: unknown }>,
+        expectedRevision?: number,
+      ): Promise<boolean>
+    }
 
     const zh: Record<string, string> = {
-      title: '推理模式',
       description: '为选定模型设置 Standard 或 Pro 模式及摘要等级。',
       models: '启用模型',
       modelsHint: '只有勾选的 provider/model 会改变 Responses 请求；未出现在目录中的已保存路由仍会保留。',
@@ -63,13 +83,10 @@ window.__ModuleLoader__.load({
       unavailableGroup: '已保存但当前不可用',
       noModels: '当前没有可用的模型目录。',
       readOnly: '设置当前为只读。',
+      formUnavailable: '当前配置不可用。',
       save: '保存',
       saving: '保存中…',
-      discard: '放弃更改',
-      unsaved: '未保存',
       saveFailed: '保存失败，请重试。',
-      expand: '展开',
-      collapse: '收起',
       catalogFailed: '模型目录加载失败；已保存的选择不会被自动删除。',
       standard: 'Standard',
       pro: 'Pro',
@@ -81,7 +98,6 @@ window.__ModuleLoader__.load({
       menuLabel: '推理模式与摘要等级',
     }
     const en: Record<string, string> = {
-      title: 'Reasoning mode',
       description: 'Set Standard or Pro mode and summary level for selected models.',
       models: 'Enabled models',
       modelsHint: 'Only checked provider/model routes change Responses requests; saved routes remain when absent from the catalog.',
@@ -92,13 +108,10 @@ window.__ModuleLoader__.load({
       unavailableGroup: 'Saved but currently unavailable',
       noModels: 'No model catalog is currently available.',
       readOnly: 'Settings are read-only.',
+      formUnavailable: 'This configuration is not available.',
       save: 'Save',
       saving: 'Saving…',
-      discard: 'Discard changes',
-      unsaved: 'Unsaved',
       saveFailed: 'Save failed; please try again.',
-      expand: 'Expand',
-      collapse: 'Collapse',
       catalogFailed: 'The model catalog could not be loaded; saved selections were not removed.',
       standard: 'Standard',
       pro: 'Pro',
@@ -111,18 +124,6 @@ window.__ModuleLoader__.load({
     }
 
     const css = `
-      .rm-card { border: .5px solid var(--dsw-alias-border-l4); background: var(--dsw-alias-bg-layer-3); border-radius: 16px; list-style: none; transition: border-color .16s, background .16s; }
-      .rm-card:hover { border-color: var(--dsw-alias-label-dimmed); }
-      .rm-card-open { background: var(--dsw-alias-bg-layer-2); border-color: var(--dsw-alias-label-dimmed); }
-      .rm-head { appearance: none; width: 100%; font: inherit; color: inherit; text-align: left; cursor: pointer; background: transparent; border: 0; border-radius: 12px; display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
-      .rm-head:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
-      .rm-heading { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
-      .rm-name { color: var(--dsw-alias-label-primary); font-size: 15px; font-weight: 600; line-height: 1.4; }
-      .rm-description { color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 1.5; }
-      .rm-pending { flex: none; }
-      .rm-chevron { color: var(--dsw-alias-label-tertiary); flex: none; transition: transform .16s; }
-      .rm-chevron-open { transform: rotate(180deg); }
-      .rm-body { border-top: .5px solid var(--dsw-alias-border-l2); margin: 0 16px; padding-bottom: 8px; }
       .rm-readonly { color: var(--dsw-alias-label-tertiary); margin: 12px 0 0; font-size: 12px; line-height: 1.5; }
       .rm-field { display: grid; gap: 10px; padding: 12px 0; }
       .rm-field-head { display: flex; align-items: center; gap: 8px; }
@@ -143,14 +144,6 @@ window.__ModuleLoader__.load({
       .rm-model-name { color: var(--dsw-alias-label-primary); font-size: 13px; }
       .rm-route { color: var(--dsw-alias-label-tertiary); margin-top: 2px; font-size: 11px; }
       .rm-unavailable { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
-      .rm-footer { border-top: .5px solid var(--dsw-alias-border-l2); display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 0 4px; }
-      .rm-failed { min-width: 0; color: var(--dsw-alias-label-error); flex: 1; margin: 0; font-size: 12px; line-height: 1.5; }
-      .rm-discard, .rm-save { appearance: none; border: 1px solid transparent; border-radius: 8px; padding: 5px 14px; font: inherit; font-size: 13px; line-height: 1.5; cursor: pointer; }
-      .rm-discard { border-color: var(--dsw-alias-border-l2); background: none; color: var(--dsw-alias-label-secondary); }
-      .rm-discard:hover:not(:disabled) { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-label-dimmed); }
-      .rm-save { background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-layer-3); }
-      .rm-discard:disabled, .rm-save:disabled { opacity: .4; cursor: default; }
-      .rm-discard:focus-visible, .rm-save:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
       .rm-control-root { min-width: 0; position: relative; display: inline-flex; order: 1; }
       /* The right slot is rendered before the model seat; keep this ordering local to this plugin. */
       .uV2eYG_trailing:has(.rm-control-root) > [data-slot='conversation.input.model'] { order: 0; }
@@ -239,33 +232,39 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * One row's configuration page. The plugins page renders this entry twice:
+     * once as the row's one-liner (`view: 'summary'`, no form) and once, when the
+     * row is opened, as the page body, where the owner supplies the Host form —
+     * the accepted values, the entry revision, and the revision-fenced write. The
+     * page frame, its save control, and its failure notice are the official
+     * settings form's; this component owns the catalog-driven route list only.
+     */
     function ReasoningModeCard(props: any): any {
       const translate = props.t as (key: string, params?: { n?: number }) => unknown
       const t = (key: string, ...args: any[]) => String(
         translate(key, args.length > 0 ? { n: args[0] } : undefined),
       ).replace(/\{n\}/g, String(args[0] ?? 0))
-      const scope = props.scope as Scope
+      const form = props.form as ConfigPageForm | undefined
       const sessionFace = props.sessionFace as () => SessionFace | undefined
-      const [revision, setRevision] = useState(0)
-      const [open, setOpen] = useState(false)
       const [dirty, setDirty] = useState(false)
-      const initial = scope.getSnapshot()
-      const [draftModels, setDraftModels] = useState(() => copyModels(initial.value)) as [Selection[], (value: any) => void]
       const [saving, setSaving] = useState(false)
       const [failed, setFailed] = useState(false)
+      const [draftModels, setDraftModels] = useState(() => copyModels(form?.state.value)) as [Selection[], (value: any) => void]
       const [catalog, setCatalog] = useState(null) as [CatalogGroup[] | null, (value: CatalogGroup[] | null) => void]
       const [catalogError, setCatalogError] = useState(null) as [string | null, (value: string | null) => void]
 
-      useEffect(() => scope.subscribe(() => setRevision((value: number) => value + 1)), [scope])
-      const snapshot = scope.getSnapshot()
-      const value = snapshot.value ?? { models: [] }
+      // The plugins page mounts both views as separate entries, so every hook
+      // runs in both and opening a row can never change the hook order.
+      const isPage = props.view === 'page' && form !== undefined
+      const revision = form?.state.revision
+      const value = form?.state.value ?? { models: [] }
 
       useEffect(() => {
-        if (!dirty && snapshot.value) {
-          setDraftModels(copyModels(snapshot.value))
-          setFailed(false)
-        }
-      }, [revision, dirty, snapshot.value])
+        if (!isPage || dirty) return
+        setDraftModels(copyModels(form?.state.value))
+        setFailed(false)
+      }, [isPage, revision, dirty, value])
 
       const loadCatalog = async () => {
         setCatalogError(null)
@@ -290,8 +289,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      useEffect(() => { void loadCatalog() }, [])
-      useEffect(() => { if (open && catalogError !== null) void loadCatalog() }, [open])
+      useEffect(() => { if (isPage) void loadCatalog() }, [isPage])
 
       const savedModels = useMemo(() => copyModels(value), [value])
       const savedByKey = new Map(savedModels.map((item: Selection) => [keyOf(item), item]))
@@ -313,8 +311,11 @@ window.__ModuleLoader__.load({
         unavailable.push(item)
       }
 
-      if (snapshot.status !== 'ready') return null
+      // The summary entry is the row's one-liner; only the page entry has a form.
+      if (props.view !== 'page') return e('span', null, t('description'))
+      if (form === undefined || form.state.status !== 'ready') return null
 
+      const writable = form.state.writable
       const toggle = (item: { provider: string; model: string }) => {
         const key = keyOf(item)
         setDraftModels((current: Selection[]) => current.some((entry) => keyOf(entry) === key)
@@ -328,17 +329,20 @@ window.__ModuleLoader__.load({
         setDirty(true)
       }
       const save = async () => {
-        if (!snapshot.writable || saving) return
+        if (!writable || saving) return
         setSaving(true)
         setFailed(false)
+        let accepted = false
         try {
-          await scope.set('models', draftModels)
-          setDirty(false)
+          // One revision-fenced write for the whole list, fenced by the revision
+          // the drafts were staged against.
+          accepted = await form.mutate([{ op: 'set', path: ['models'], value: draftModels }], revision)
         } catch {
-          setFailed(true)
-        } finally {
-          setSaving(false)
+          accepted = false
         }
+        if (accepted) setDirty(false)
+        else setFailed(true)
+        setSaving(false)
       }
       const discard = () => {
         setDraftModels(savedModels)
@@ -352,57 +356,55 @@ window.__ModuleLoader__.load({
         modelName,
         available,
         checked: selected.has(keyOf(item)),
-        disabled: !snapshot.writable || saving,
+        disabled: !writable || saving,
         onToggle: () => toggle(item),
         t,
       })
 
-      return e('li', { className: `rm-card ${open ? 'rm-card-open' : ''}` },
-        e('button', {
-          type: 'button', className: 'rm-head', 'aria-expanded': open,
-          'aria-label': `${t(open ? 'collapse' : 'expand')}: ${t('title')}`,
-          onClick: () => setOpen(!open),
-        },
-          e('span', { className: 'rm-heading' },
-            e('span', { className: 'rm-name' }, t('title')),
-            e('span', { className: 'rm-description' }, t('description')),
-          ),
-          dirty ? e(Tag, { tone: 'neutral', className: 'rm-pending' }, t('unsaved')) : null,
-          e(IconChevronDownOutline14, { className: `rm-chevron ${open ? 'rm-chevron-open' : ''}` }),
+      const controls = e('div', { className: 'rm-field' },
+        e('div', { className: 'rm-field-head' },
+          e('span', { className: 'rm-field-label' }, t('models')),
+          e('span', { className: 'rm-count' }, t('selected', draftModels.length)),
         ),
-        open ? e('div', { className: 'rm-body' },
-          !snapshot.writable ? e('p', { className: 'rm-readonly', role: 'status' }, t('readOnly')) : null,
-          e('div', { className: 'rm-field' },
-            e('div', { className: 'rm-field-head' },
-              e('span', { className: 'rm-field-label' }, t('models')),
-              e('span', { className: 'rm-count' }, t('selected', draftModels.length)),
-            ),
-            e('p', { className: 'rm-hint' }, t('modelsHint')),
-            catalogError !== null ? e('div', { className: 'rm-catalog-error', role: 'alert' },
-              e('span', null, `${t('catalogFailed')} (${catalogError})`),
-              e('button', { type: 'button', disabled: saving, onClick: () => { void loadCatalog() } }, t('retry')),
-            ) : null,
-            catalog === null && catalogError === null ? e('p', { className: 'rm-notice', role: 'status' }, t('loading')) : null,
-            (catalog && catalog.length > 0) || effective.size > 0 ? e('fieldset', { className: 'rm-models' },
-              e('legend', null, t('models')),
-              catalog?.map((group: CatalogGroup) => e('div', { className: 'rm-model-group', key: group.id },
-                e('div', { className: 'rm-provider' }, group.name ?? group.id),
-                (group.models ?? []).map((model: CatalogModel) => renderRow(group.name ?? group.id, { provider: group.id, model: model.id }, true, displayName(model))),
-              )),
-              unavailable.length > 0 ? e('div', { className: 'rm-model-group' },
-                e('div', { className: 'rm-provider' }, t('unavailableGroup')),
-                unavailable.map((item) => renderRow(item.provider, item, false, item.model)),
-              ) : null,
-            ) : null,
-            catalog && catalog.length === 0 && effective.size === 0 ? e('p', { className: 'rm-notice' }, t('noModels')) : null,
-          ),
-          e('div', { className: 'rm-footer' },
-            failed ? e('p', { className: 'rm-failed', role: 'status' }, t('saveFailed')) : null,
-            e('button', { type: 'button', className: 'rm-discard', disabled: !dirty || saving, onClick: discard }, t('discard')),
-            e('button', { type: 'button', className: 'rm-save', disabled: !dirty || saving || !snapshot.writable, onClick: () => { void save() } }, saving ? t('saving') : t('save')),
-          ),
+        e('p', { className: 'rm-hint' }, t('modelsHint')),
+        catalogError !== null ? e('div', { className: 'rm-catalog-error', role: 'alert' },
+          e('span', null, `${t('catalogFailed')} (${catalogError})`),
+          e('button', { type: 'button', disabled: saving, onClick: () => { void loadCatalog() } }, t('retry')),
         ) : null,
+        catalog === null && catalogError === null ? e('p', { className: 'rm-notice', role: 'status' }, t('loading')) : null,
+        (catalog && catalog.length > 0) || effective.size > 0 ? e('fieldset', { className: 'rm-models' },
+          e('legend', null, t('models')),
+          catalog?.map((group: CatalogGroup) => e('div', { className: 'rm-model-group', key: group.id },
+            e('div', { className: 'rm-provider' }, group.name ?? group.id),
+            (group.models ?? []).map((model: CatalogModel) => renderRow(group.name ?? group.id, { provider: group.id, model: model.id }, true, displayName(model))),
+          )),
+          unavailable.length > 0 ? e('div', { className: 'rm-model-group' },
+            e('div', { className: 'rm-provider' }, t('unavailableGroup')),
+            unavailable.map((item) => renderRow(item.provider, item, false, item.model)),
+          ) : null,
+        ) : null,
+        catalog && catalog.length === 0 && effective.size === 0 ? e('p', { className: 'rm-notice' }, t('noModels')) : null,
       )
+
+      return e(SettingsForm, {
+        labels: {
+          unavailable: t('formUnavailable'),
+          readOnly: t('readOnly'),
+          saveFailed: t('saveFailed'),
+          save: t('save'),
+          saving: t('saving'),
+        },
+        state: {
+          available: form.state.status === 'ready',
+          writable,
+          dirty,
+          invalid: false,
+          saving,
+          failed,
+        },
+        onSave: () => { void save() },
+        onDiscard: discard,
+      }, controls)
     }
 
     function routeFromProjection(projection: any): Route | undefined {
@@ -532,7 +534,7 @@ window.__ModuleLoader__.load({
         onClick: () => { update(patch); close() },
       },
         e('span', { className: 'rm-menu-option-copy' }, e('span', { className: 'rm-menu-option-label' }, label)),
-        e('span', { className: 'rm-menu-check', 'aria-hidden': true }, current === value ? e(IconCheckOutline16, null) : null),
+        e('span', { className: 'rm-menu-check', 'aria-hidden': true }, current === value ? e(IconCheckOutlineRegular, null) : null),
       )
       const cell = (label: string, value: string, nextPane: string) => e('button', {
         type: 'button', className: 'rm-menu-cell', role: 'menuitem', 'aria-haspopup': 'menu',
@@ -540,7 +542,7 @@ window.__ModuleLoader__.load({
       },
         e('span', { className: 'rm-menu-cell-label' }, label),
         e('span', { className: 'rm-menu-cell-value' }, value),
-        e(IconChevronRightOutline14, { className: 'rm-menu-cell-chevron' }),
+        e(IconChevronRightOutlineRegular, { className: 'rm-menu-cell-chevron' }),
       )
       const menu = e('div', {
         ref: menuRef, id: menuId, className: 'rm-control-menu', style: menuPos ?? { visibility: 'hidden', left: 0, top: 0 },
@@ -574,7 +576,7 @@ window.__ModuleLoader__.load({
           e('span', { className: 'rm-control-value' }, modeLabel),
           e('span', { className: 'rm-control-separator', 'aria-hidden': true }, '·'),
           e('span', { className: 'rm-control-value' }, summaryLabel),
-          e(IconChevronDownOutline14, { className: `rm-control-chevron ${open ? 'rm-control-chevron-open' : ''}` }),
+          e(IconChevronDownOutlineRegular, { className: `rm-control-chevron ${open ? 'rm-control-chevron-open' : ''}` }),
         ),
         open ? menuNode : null,
       )
@@ -588,10 +590,10 @@ window.__ModuleLoader__.load({
         document.head.appendChild(style)
       }
       const slots = ctx.slots
-      const settingsScope = ctx.settingsScope
+      const configForms = ctx.configForms
       const locale = ctx.locale
-      if (!slots || !settingsScope || !locale) return
-      const scope = settingsScope.bind({ namespace: NS })
+      if (!slots || !configForms || !locale) return
+      const scope = configForms.get(NS)
       const t = locale.bind(NS)
       const sessionFace = (): SessionFace | undefined => {
         const viaNamespace = typeof ctx.get === 'function' ? ctx.get('remote.session') : undefined
@@ -600,12 +602,14 @@ window.__ModuleLoader__.load({
         return remote === undefined || remote === null ? undefined : remote.session as SessionFace
       }
       ctx.effect(() => locale.register(NS, { zh, en }), 'reasoning-mode: locale dictionaries')
-      slots.inject('settings.plugin.item', () => slots.register({
-        name: 'settings.plugin.item',
-        key: NS,
+      // Our row's configuration page. The plugins page dispatches
+      // `plugins.row.config` by `<package name>#<row id>` and supplies the form,
+      // so the page exists only while the Host serves this entry's namespace.
+      ctx.effect(() => configForms.whileServed([NS], () => slots.inject('plugins.row.config', () => slots.register({
+        name: 'plugins.row.config',
+        key: `${PACKAGE_NAME}#${NS}`,
         locale: NS,
-        inject: () => ({ scope, sessionFace, t }),
-      }, (props: any) => e(ReasoningModeCard, { ...props, scope, sessionFace, t })))
+      }, (props: any) => e(ReasoningModeCard, { ...props, sessionFace, t })))), 'reasoning-mode: configuration page')
       slots.inject('conversation.input.right', () => slots.register({
         name: 'conversation.input.right',
         id: NS,
@@ -614,6 +618,6 @@ window.__ModuleLoader__.load({
       }, (props: any) => e(ModeControl, { ...props, scope, sessionFace, t })))
     }
 
-    return { apply, inject: ['slots', 'settingsScope', 'locale', 'remote', 'remote.session'] }
+    return { apply, inject: ['slots', 'configForms', 'locale', 'remote', 'remote.session'] }
   },
 })

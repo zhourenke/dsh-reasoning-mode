@@ -1,15 +1,21 @@
 /**
  * Browser face for @zhourenke/dsh-reasoning-mode.
  *
- * The settings card uses the configurable-plugin slot owned by DSH's official
- * settings surface: it stages changes locally and writes only on Save, while
- * the model catalog is read live from the host API. The card chrome and the
- * model list follow the sibling cards in the same settings page —
- * `PluginCard` and `SubagentModelSelectionCard` (`dsh-client-ui-settings-
- * plugins`) — so rows are checkbox-only and routes that vanished from the
- * catalog stay listed in a trailing "saved but currently unavailable" group
- * until Save removes them. Mode and summary are adjusted per route only from
- * the compact composer control in `conversation.input.right`.
+ * Two seats, both owned by official DSH surfaces:
+ *
+ * - Our installed row's configuration page is `plugins.row.config`, dispatched
+ *   by `<package name>#<row id>` and registered only while the Host serves the
+ *   `reasoning-mode` namespace. The plugins page supplies the Host form —
+ *   accepted values, the entry revision, and the revision-fenced write — and
+ *   draws the frame, the save control, and the failure notice itself, so this
+ *   component owns nothing but the catalog-driven route list. Changes are
+ *   staged locally and committed with a single revision-fenced `models` write.
+ * - Mode and summary are adjusted per route from the compact composer control in
+ *   `conversation.input.right`, which reads and writes the same namespace live.
+ *
+ * The route list follows the sibling cards of the same surface: rows are
+ * checkbox-only, and routes that vanished from the catalog stay listed in a
+ * trailing "saved but currently unavailable" group until Save removes them.
  */
 interface Window {
     __ModuleLoader__: {

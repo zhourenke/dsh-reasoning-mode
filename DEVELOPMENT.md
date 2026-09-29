@@ -13,13 +13,13 @@ README 是刻意精简的：上述四类内容曾经在 README 里，按要求�
 | 路径 | 说明 |
 |---|---|
 | `src/index.ts` | 宿主半边全部实现：设置 schema、`llm/stream` 路由跟踪、`fetch` 包装与请求改写 |
-| `src/client.ts` | 浏览器半边：设置卡片 + 输入栏控件（纯脚本，无 `import`/`export`） |
+| `src/client.ts` | 浏览器半边：配置页（`plugins.row.config`）+ 输入栏控件（纯脚本，无 `import`/`export`） |
 | `lib/index.js` | 宿主编译产物，**必须提交**（路线 A） |
 | `lib/client.js` | 浏览器编译产物，**必须提交** |
 | `lib/types/index.d.ts` | 宿主类型声明，**必须提交** |
 | `lib/types/client.d.ts` | 浏览器类型声明，**必须提交** |
 | `test/index.test.mjs` | 宿主半边（9 项）：schema 归一化、请求改写、路由解析、fetch 包装与还原、模块契约 |
-| `test/client.test.mjs` | 浏览器半边（11 项）：**真正执行** `lib/client.js`，含卡片挂载与未 ready 分支、session 默认模型 fallback 与无 session 分支 |
+| `test/client.test.mjs` | 浏览器半边（13 项）：**真正执行** `lib/client.js`，含配置页挂载、摘要视图、带修订号的写入、未 ready / 无 form 分支、session 默认模型 fallback 与无 session 分支 |
 | `cordis.patch.yml` | profile 层插入声明（`- insert:` 形式） |
 | `tsconfig.json` | 宿主半边配置（Node，无 DOM） |
 | `tsconfig.client.json` | 浏览器半边配置（DOM，无 Node 类型） |
@@ -70,21 +70,36 @@ Get-Item "$prof\node_modules\@zhourenke\dsh-reasoning-mode" -Force | Select-Obje
 |---|---|
 | `src/index.ts`（宿主） | `pnpm run build` + **重启 DSH** |
 | `src/client.ts`（浏览器） | `pnpm run build` + 重启 + **刷新页面**（bundle 在插件激活时被快照） |
-| `~/.dsh/settings.yaml` 配置 | **热重载**，不需要重启也不需要刷新 |
+| `<profile>/cordis.patch.yml` 的 `config`（设置界面的写入目标） | **热重载**，不需要重启也不需要刷新 |
 
 ## 配置落点
 
-本插件的用户配置只有一个落点——`<harness home>/settings.yaml` 里的顶层键 `reasoning-mode`，由宿主半边 `ctx.settings.register(SETTINGS_NAMESPACE, Config)` 注册，卡片与输入栏控件都经设置服务读写它。
+本插件的用户配置只有一个落点——**profile 补丁层里 `reasoning-mode` 那一行的 `config`**，也就是 `~/.dsh/profiles/<profile>/cordis.patch.yml` 中：
+
+```yaml
+- id: reasoning-mode
+  name: '@zhourenke/dsh-reasoning-mode'
+  config:
+    models: [...]
+```
+
+0.1.7 起 DSH 的设置界面不再有独立的 `settings.yaml`：每个插件的设置**就是这个 profile 条目自己的 `config`**，宿主侧由 loader 直接作为 `apply(ctx, config)` 的第二个参数交进来，浏览器侧经 `ctx.configForms` 读写同一个条目。因此：
+
+- 宿主半边**不再注册任何设置**（没有 `ctx.settings.register`），只是声明 `Config` schema 并从 `config` 读；
+- 设置界面的写入目标就是 profile 补丁层，而补丁层是 `patchReload: live`，所以**配置改动不需要重启**；
+- 设置界面只能写 **volatile 字段**（见第 10 条）——写成非 volatile 会导致保存时抛错。
 
 包内的 `cordis.patch.yml` 只负责把插件**插进 profile 层**，不带 `config`：
 
 ```yaml
 - insert:
-    - id: reasoning-mode          # 必须与 src/index.ts 导出的 name 一致
+    - id: reasoning-mode          # 同时是设置条目的 id：浏览器侧 `configForms.get('reasoning-mode')` 按它取用
       name: '@zhourenke/dsh-reasoning-mode'
 ```
 
-⚠️ **同一个文件名在 profile 目录下还有第二份**（`<profile>/cordis.patch.yml`），那份是用户的**覆盖**层，用 `- id: reasoning-mode` 直挂（**不带 `insert`**）；在那里写 `insert` 不会报错，而是静默追加第二个实例。README 里给用户看的片段是 `settings.yaml` 的 namespace，不涉及这个陷阱，但改 README 或排查「插件出现两次」时要记得两者的区别。
+⚠️ **同一个文件名在 profile 目录下还有第二份**（`<profile>/cordis.patch.yml`），那份是用户的**覆盖**层，用 `- id: reasoning-mode` 直挂（**不带 `insert`**）；在那里写 `insert` 不会报错，而是静默追加第二个实例。README 里给用户看的片段正是这一层，所以这两份文件的区别必须一直记住。
+
+**`id` 有三个消费者，改一处必须改全部**：profile 补丁层里作为覆盖锚点、`configForms` 里作为 namespace、`plugins.row.config` 里作为 `<包名>#<行 id>` 的后半段。`name` 导出与包内 patch 的 `id` 保持一致是为了诊断可读，不是协议。
 
 ## 实现要点（为什么这样做）
 
@@ -94,7 +109,7 @@ Get-Item "$prof\node_modules\@zhourenke\dsh-reasoning-mode" -Force | Select-Obje
 
 | 字面量 | 宿主侧 | 浏览器侧 |
 |---|---|---|
-| 设置 namespace | `SETTINGS_NAMESPACE = 'reasoning-mode'` | `const NS = 'reasoning-mode'`（同时是 `settings.plugin.item` 的 `key` 与 `locale` 命名空间） |
+| 配置条目 id | 包内 `cordis.patch.yml` 的 `id: reasoning-mode` | `const NS = 'reasoning-mode'`（同时是 `configForms` 的 namespace、`plugins.row.config` 的 `<包名>#<id>` 后半段与 `locale` 命名空间） |
 | 路由键分隔符 | `routeKey()` 里的 `\u0000` | `keyOf()` 里的同一个字符 |
 | 模式取值 | `'standard' \| 'pro'` | 同名联合类型 |
 | 摘要取值 | `'auto' \| 'concise' \| 'detailed'` | 同名联合类型 |
@@ -104,16 +119,15 @@ Get-Item "$prof\node_modules\@zhourenke\dsh-reasoning-mode" -Force | Select-Obje
 
 ### 2. 宿主 `inject` 只列真正读取的服务
 
-`export const inject = ['settings']`。事件订阅**不经过服务**：监听 `llm/stream` 不需要 inject `llm`，官方 `dsh-repeat-tool-reminder` 一个宿主 inject 都不声明也在同一个事件上监听。多列一个名字的代价是插件永远等不到那个服务就绪（缺一个就永不激活），这是最容易写错又最难察觉的一类。
+`export const inject = []`。宿主半边**一个服务都不读**：它只订阅 `llm/stream`、包装 `ctx.fetch`，两者都不经过服务。事件订阅**不经过服务**：监听 `llm/stream` 不需要 inject `llm`，官方 `dsh-repeat-tool-reminder` 一个宿主 inject 都不声明也在同一个事件上监听。多列一个名字的代价是插件永远等不到那个服务就绪（缺一个就永不激活），这是最容易写错又最难察觉的一类。`ctx.fetch` 是 context 上的能力而不是服务，同样不列入。
 
 ### 3. 模块增强导入不能删
 
 ```ts
-import type {} from '@deepseek-ai/dsh-llm'       // 载入 Events['llm/stream']
-import type {} from '@deepseek-ai/dsh-settings'  // 载入 Context.settings
+import type {} from '@deepseek-ai/dsh-llm'   // 载入 Events['llm/stream']
 ```
 
-删掉任意一条，`ctx.on('llm/stream', …)` 或 `ctx.settings` 会在完全无关的位置报类型错误。它们是 `import type {}`，不产生运行时依赖，所以既不能删，也不进 `dependencies`；对应包按宿主提供的包放进 `peerDependencies`。
+删掉这条，`ctx.on('llm/stream', …)` 会在完全无关的位置报类型错误。它是 `import type {}`，不产生运行时依赖，所以既不能删，也不进 `dependencies`；对应包按宿主提供的包放进 `peerDependencies`。浏览器半边是纯工厂脚本（只有 `interface Window` 与 `require`），没有 `import`，也就没有增强导入。
 
 ### 4. 请求准入有五道守卫，任何一道不过就原样转发
 
@@ -161,43 +175,59 @@ return (async function* () {
 
 **与 DSH 自带 `reasoningEffort` 的区别（写文档时最容易混的一处）**：DSH 的 LLM 层有自己的推理档位概念——`GenerateOptions.reasoningEffort` / `LlmModelReasoningInfo`，由 adapter 声明每个模型有哪些档位（`@deepseek-ai/dsh-llm` 的 `types.d.ts`）。那是 **DSH 侧的调用参数**，由 DSH 的模型选择器与 adapter 决定怎么落到请求体里；本插件不读也不写它，只在最终 `fetch` 边界上补 Responses 的 `reasoning.mode` / `reasoning.summary`。两者会同时出现在同一个请求体里，互不覆盖（插件只改自己那两个键）。README 面向使用者时要把这条说清楚，否则「我已经有推理档位了，为什么还要这个插件」会成为第一个疑问。
 
-### 10. 设置 schema 的 transform 必须自包含
+### 10. `models` 必须声明为 volatile，否则设置界面根本写不进去
 
-`Config` 是 `z.transform(..., callback, true)`，而 Settings 会把 `callback` **序列化成字符串**、在浏览器里重新水合执行（`Config.toJSON()` 里能看到）。所以回调里**不能引用任何模块级 helper**（`normalizeModels` 之类），所有逻辑必须写在回调内部；`test/index.test.mjs` 用 `new Function` 复现了这条水合路径，删掉自包含性会当场失败。
+```ts
+export const Config = z.object({
+  models: z.array(ModelSettingsSchema).default([]).volatile(),
+}) as unknown as ReturnType<typeof z.any>
+```
 
-回调同时做三件事：丢弃非字符串/空的 `provider`/`model`、按精确键去重、把缺失或非法的 `mode`/`summary` 归一化成 `standard`/`auto`。旧版本写进 `settings.yaml` 的 `defaultMode`/`defaultSummary` 等字段在这里被静默丢弃。
+两个作用，缺一不可：
 
-### 11. 客户端卡片是三态：draft / saved / effective
+1. **让 loader 传进来的是一把「活的值」而不是快照。** `apply(ctx, config)` 拿到的是 `Volatile<ModelSettings[]>`（`{ get(): VolatileSnapshot<T> }`），loader 在设置写入后**就地更新**同一个引用，不重新 `apply`。所以宿主半边每次请求都 `config.models.get()`，而不是在 `apply` 时把列表抄进闭包——抄进去的写法在设置页保存后不会生效（而且不会有任何报错）。
+2. **它是设置界面的写入许可。** 宿主侧的写路径（`dsh-settings` 的 `write(ns, …)`）先取 `volatileForm(schema)`，再对每个 path 检查 `isVolatilePath`：**schema 里没有 volatile 字段就抛 `Plugin entry "X" has no volatile fields`，写了非 volatile 的 path 就抛 `Config field "models" is not volatile`**。所以「配置页保存报错」的第一嫌疑不是表单，而是 schema 少写了 `.volatile()`。
 
-- `draftModels`：卡片正在编辑的**暂存**集合（初始为快照的副本）。
-- `savedModels`：当前快照的集合（每次渲染重新 `copyModels`）。
-- `selected`：`draftModels` 的键集合，决定复选框勾选状态。
+`Config` 用 `as unknown as ReturnType<typeof z.any>` 是给 `apply` 的第二个参数一个可写的推导类型（官方插件同样这么写）；`Config.toJSON()` 里 volatile 记在字段自己的 ref 上：`{ type: 'array', meta: { default: [], volatile: true }, inner: … }`，`test/index.test.mjs` 按这个形状断言，删掉 `.volatile()` 会当场失败。
 
-点**保存**才 `scope.set('models', draftModels)`；点**放弃更改**把 draft 重置回 saved。宿主推送新快照时，只有**不脏**（`!dirty`）才覆盖 draft——否则用户正在编辑的内容会被外部更新冲掉。
+### 11. 归一化在读取时做，不再塞进 schema transform
 
-### 12. 「不可用」分组必须基于 effective 而不是 draft
+0.1.7 的设置值不再被序列化到浏览器里水合执行，所以**没有「transform 必须自包含」这条约束**了。归一化搬到 `normalizeModels(value)`，由宿主半边在每次读取时调用（`settingsByRoute(normalizeModels(config.models.get()))`）：丢弃非字符串/空的 `provider`/`model`、按精确路由键去重、把缺失或非法的 `mode`/`summary` 归一化成 `standard`/`auto`。它现在是**普通导出函数**，测试可以直接调用，不必再用 `new Function` 复现水合路径；schema 只声明形状与默认值。
+
+### 12. 配置页是官方表单的一个「字段组」，不是自绘卡片
+
+`plugins.row.config` 的 owner（插件页）把 entry 渲染两次，并**只**传 `view` 与 `form`：
+
+- `view: 'summary'`：行的单行说明，也是该行没有 description 时的兜底；本插件返回 `t('description')` 一行文本，**不读模型目录**（每行都发一次目录请求就浪费了）。
+- `view: 'page'`：`form` 是宿主给的 `ConfigPageForm = { state, mutate }`。页面用 `state.value` 作为「已保存值」、`state.revision` 作为写入栅栏、`state.writable` 决定可编辑性，提交时一次 `mutate([{ op: 'set', path: ['models'], value: draftModels }], revision)`（返回布尔：是否被接受）。
+
+**框架、保存按钮与失败提示都归官方 `SettingsForm`**（`dsh-client-ui-primitives`），本插件只传 labels 与 shell state（`available/writable/dirty/invalid/saving/failed`），把控件作为 children 交进去。自绘卡片头、展开/收起、`.rm-card` 那一套已经删除——那是重复造轮子，而且与官方页面的标题/面包屑/保存条冲突。
+
+`draft / saved` 两个集合仍然保留：`draftModels` 是页面正在编辑的暂存集合（初始为 `form.state.value` 的副本），`savedModels` 每次渲染从 `form.state.value` 重算；只有**不脏**（`!dirty`）时外部更新才覆盖 draft，否则用户正在编辑的内容会被冲掉。
+
+### 13. 「不可用」分组必须基于 effective 而不是 draft
 
 ```ts
 const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved routes… 注释
 ```
 
-取消勾选时条目仍留在 `effective` 里，所以它继续显示在目录位置（而不是掉进「已保存但当前不可用」），直到保存真正把它移除。若改用 draft 计算，取消勾选的瞬间条目会跳到不可用分组，看起来像「已删除」，与 Subagent 卡片的行为不一致。
+取消勾选时条目仍留在 `effective` 里，所以它继续显示在目录位置（而不是掉进「已保存但当前不可用」），直到保存真正把它移除。若改用 draft 计算，取消勾选的瞬间条目会跳到不可用分组，看起来像「已删除」，与官方同类配置页的行为不一致。
 
-### 13. 勾选新路由写死 `standard`/`auto`；重勾保留原值
+### 14. 勾选新路由写死 `standard`/`auto`；重勾保留原值
 
 `toggle()` 添加条目时用 `savedByKey.get(key) ?? { …, mode: 'standard', summary: 'auto' }`：目录里从没出现过的路由使用硬编码默认值，而**曾经保存过**的路由从 `savedModels` 取回原值。设置界面因此不需要「新增模型默认值」这类配置项——用户明确要求过不要它。
 
-### 14. 输入栏控件按当前 session 路由出现；新 session 用目录默认值兜底
+### 15. 输入栏控件按当前 session 路由出现；新 session 用目录默认值兜底
 
-控件从官方 session 标准源拿到 `sessionId`，再通过 `props.useProjection('modelSelection')` 取 `next ?? lastUsed`。已有 projection 路由始终优先；新 session 如果 projection 还是 `{ next: null, lastUsed: null }`，就调用插件已注入的 `remote.session.modelCatalog()`，用目录的 `default` 作为临时当前路由。只有这个路由已经在 `models` 里勾选时控件才渲染；目录请求完成前仍然返回 `null`。选中菜单项直接 `scope.set('models', next)`（没有暂存态、没有保存按钮），所以它和卡片的交互模型不同，不要试图统一。
+控件从官方 session 标准源拿到 `sessionId`，再通过 `props.useProjection('modelSelection')` 取 `next ?? lastUsed`。已有 projection 路由始终优先；新 session 如果 projection 还是 `{ next: null, lastUsed: null }`，就调用插件已注入的 `remote.session.modelCatalog()`，用目录的 `default` 作为临时当前路由。只有这个路由已经在 `models` 里勾选时控件才渲染；目录请求完成前仍然返回 `null`。选中菜单项直接 `scope.set('models', next)`（没有暂存态、没有保存按钮），所以它和配置页的交互模型不同，不要试图统一。
 
 没有 `sessionId` 时代表当前还没有可寻址的 session（通常是未选择工作区的空 composer）：控件直接返回 `null`，**不请求模型目录**。这条分支不能用"目录默认值"硬凑出一个路由，否则会把没有目标 session 的 UI 状态误显示成可配置路由。
 
-### 15. 菜单几何照抄官方
+### 16. 菜单几何照抄官方
 
 `conversation.input.right` 槽里的控件按官方嵌套菜单写：根面板两行 `rm-menu-cell`（左侧标签、右侧当前值、行尾 chevron），子面板若干 `rm-menu-option`（选中项右侧打勾）。关键尺寸：cell `height: 40px`、option `min-height: 38px`、菜单圆角 `20px`、`--dsw-elevation-prominent`、`z-index: 1100`。**没有标题行，也没有返回行**——用户明确要求过与官方一致，子面板靠 Escape / 点击外部回到根面板。
 
-### 16. 文案只有一个落点，README 是第二落点
+### 17. 文案只有一个落点，README 是第二落点
 
 所有用户可见文案在 `src/client.ts` 的 `zh` / `en` 字典里，经 `locale.register(NS, { zh, en })` 注册；宿主警告是英文（进日志）。改文案时记得 README(zh/en) 里的对应描述也要跟着改——两处不会自动同步。README 里出现的界面用语（如「已保存但当前不可用」「保存」）必须与字典逐字一致。
 
@@ -205,33 +235,33 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 
 用户侧的护栏原先写在 README 里，现在集中在这里（文案与 `src/client.ts` 的 `zh`/`en` 字典逐字对应）：
 
-| 状态 | 判据 | 卡片 | 输入栏控件 |
+| 状态 | 判据 | 配置页 | 输入栏控件 |
 |---|---|---|---|
-| 快照未就绪 | `settingsScope` 快照拿不到值 | 返回 `null`，不产出任何元素 | 不渲染 |
-| 只读 | `snapshot.writable === false` | 顶部显示「设置当前为只读。」，保存按钮禁用 | **不做只读判断**：菜单照常可点，`scope.set` 被拒后由 `.catch(() => {})` 静默吞掉 |
+| 未就绪 | `form.state.status !== 'ready'`（或 owner 没给 form） | 返回 `null`，不产出任何元素 | 不渲染 |
+| 只读 | `form.state.writable === false` | labels 交官方表单，由它显示「设置当前为只读。」并禁用保存 | **不做只读判断**：菜单照常可点，`scope.set` 被拒后由 `.catch(() => {})` 静默吞掉 |
 | 目录加载失败 | `catalogError !== null` | 显示「模型目录加载失败；已保存的选择不会被自动删除。」+ 具体错误 + **重试** | 已有 projection 路由照常显示；新 session 没有目录默认路由时不渲染 |
 | 目录为空 | `catalog.length === 0` 且 `effective.size === 0` | 显示「当前没有可用的模型目录。」 | 已有 projection 路由照常显示；新 session 没有目录默认路由时不渲染 |
 | 目录加载中 | `catalog === null` 且无错误 | 显示「正在加载模型目录…」 | 新 session 在目录默认路由返回前不渲染；已有 projection 路由不依赖目录，照常显示 |
 | 没有可寻址 session | `props.sessionId === undefined` | 不适用 | 不渲染，也不请求目录 |
-| 有未保存改动 | `dirty` | 标题旁显示「未保存」，保存可点 | 不适用（控件即时写盘） |
-| 保存失败 | 写盘 promise 被拒 | 显示「保存失败，请重试。」 | 写盘被拒时静默 |
+| 有未保存改动 | `dirty` | shell state 交官方表单（它自己画未保存状态），保存可点 | 不适用（控件即时写盘） |
+| 保存失败 | `mutate` 返回 `false` 或抛错 | shell state 的 `failed` 交官方表单，由它显示「保存失败，请重试。」 | 写盘被拒时静默 |
 
 两处有意的不对称，改代码前先想清楚再动：
 
-- **只读时控件仍可点**：卡片会拦住保存，控件不会。界面在只读档下本来就少见，付出的是「点了没反应」的观感；要改就在 `update()` 前面加 `writable` 判断并给出与卡片一致的提示，而不是让菜单整个消失。
+- **只读时控件仍可点**：配置页会把只读交官方表单拦住保存，控件不会。界面在只读档下本来就少见，付出的是「点了没反应」的观感；要改就在 `update()` 前面加 `writable` 判断并给出与配置页一致的提示，而不是让菜单整个消失。
 - **控件写盘失败静默**：`.catch(() => {})` 只保证 `busy` 复位，没有错误提示。它的写入是「选中即生效」的乐观交互，失败时用户看到的是菜单选了但值没变（订阅会推回旧值）。
 
 ## 测试要点
 
 | 文件 | 覆盖 |
 |---|---|
-| `test/index.test.mjs` | `Config.toJSON()` 的水合与归一化（含旧字段丢弃）、`applyReasoningBody` 保留其它字段、`isResponsesRequest`、`resolveRouteCandidate` 的歧义规则、`apply()` 装 fetch 包装并在卸载后还原、原生 `Request` 体重建与 `content-length` 移除、并发同 model 路由的亲和选择、stream 结束后的还原、模块契约（`name`/`inject`/`apply`） |
-| `test/client.test.mjs` | 槽注册与 `inject` 面、官方菜单结构（静态断言源码与产物）、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/`<select>`）、**挂载一次卡片并断言注入面被转交**、未 ready 时返回 `null` 且不产出元素、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
+| `test/index.test.mjs` | `Config.toJSON()` 里 `models` 的 volatile 标记与字段形状、`normalizeModels` 的归一化、`applyReasoningBody` 保留其它字段、`isResponsesRequest`、`resolveRouteCandidate` 的歧义规则、`apply()` 装 fetch 包装并在卸载后还原、原生 `Request` 体重建与 `content-length` 移除、并发同 model 路由的亲和选择、stream 结束后的还原、模块契约（`name`/`inject`/`apply`）、**volatile 的活性（改 `config.models` 后下一请求即生效）** |
+| `test/client.test.mjs` | `plugins.row.config` 注册（key、`whileServed` 门禁）与 `inject` 面、官方菜单结构（静态断言源码与产物）、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/自绘卡片样式）、**挂载一次配置页并断言注入面被转交、且不会自带 scope**、未 ready / 无 form 时返回 `null`、**摘要视图只出一行文本且不读目录**、**暂存后一次带修订号的写入**、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
 
 两条纪律：
 
-- **mock 必须来自实测的宿主契约。** `test/client.test.mjs` 顶部的注释块记录了槽所有者、注册形状、`settingsScope` 快照字段的来源（对应包与文件），改 mock 前先回去读那些声明。
-- **断言「注入面被转交」，而不只是断言 `inject()` 返回了什么。** 官方槽的 owner props 是空的（`children?: never`），卡片唯一的输入就是 `inject()` 面，所以测试要真的调用一次 `render({})` 并用返回的 props 执行卡片组件。
+- **mock 必须来自实测的宿主契约。** `test/client.test.mjs` 顶部的注释块记录了槽所有者、注册形状、`ConfigPageForm` 与 `ConfigFormSnapshot` 字段的来源（对应包与文件），改 mock 前先回去读那些声明。
+- **断言「注入面被转交」，而不只是断言 `inject()` 返回了什么。** owner props 只有 `view` 与 `form`，页面唯一的额外输入就是 `inject()` 面，所以测试要真的调用一次 `render({ view: 'page', form })` 并用返回的 props 执行页面组件；同时也断言页面**没有**自己塞一个 `scope` 进去。
 
 ## 发布纪律
 
@@ -246,7 +276,7 @@ git status --porcelain            # 构建后必须为空
 
 git ls-files cordis.patch.yml lib/index.js lib/types/index.d.ts lib/client.js lib/types/client.d.ts
 
-# 载荷：8 个文件（README.md 与 README.en.md 都由 README* 自动包含）
+# 载荷：9 个文件（README.md 与 README.en.md 都由 README* 自动包含）
 pnpm pack --dry-run
 ```
 
@@ -269,6 +299,8 @@ foreach ($f in 'README.md','README.en.md') {
 
 ## 已知陷阱（本仓库踩过的）
 
+- **「启动报不兼容」不等于本插件被闸门拦下，闸门放行也不等于 API 兼容。** 闸门（`evaluatePluginCompatibility`）只比 `@deepseek-ai/dsh-*` 名字的 peer 范围，且用 `includePrerelease: true`——旧写法 `^0.1.5-rc.1` 在 `0.1.7-rc.2` 下**照样通过**。真正把 0.1.5 版插件打死的是 API 消失（`ctx.settings.register`、`ctx.settingsScope`、`settings.plugin.item`、数字后缀的图标名），这些一个都不会出现在闸门输出里。看到宿主打印某插件 incompatible 时，先确认那条警告里的包名是不是本插件。
+- **图标名从数字后缀改成了尺寸名后缀。** `IconChevronDownOutline14` / `IconCheckOutline16` 在 0.1.7 的 `dsh-client-ui-primitives` 里**不存在**，`require()` 拿到 `undefined`，要到 React 渲染时才以 `Element type is invalid` 崩掉——症状出现在渲染期而不是加载期。现在按描边粗细分 `…OutlineRegular`（1px）与 `…OutlineMedium`（1.3px）。
 - **正则做「旧字段残留」扫描时要加词边界**：`/draftMode/` 会命中 `draftModels`，把正确的代码判成残留。当前用的是 `\bdefaultMode\b|…|\bdraftMode\b|…`。
 - **`pnpm pack --dry-run --json` 退出 1 且没有输出**（pnpm 的 `pack` 不认 `--json`）；要机器可读结果用 `npm pack --dry-run --json`，两者对同一份 `files` 点出的文件集相同。
 - **`npm pack` 认 cwd 不认 `--prefix`**：检查另一个目录要先 `Push-Location` 过去。
@@ -278,21 +310,32 @@ foreach ($f in 'README.md','README.en.md') {
 
 ## 与工作区其它插件的关系
 
-- **只读约束**：`dsh-reasoning-summary` 与 `dsh-reasoning-level` 不是本插件的代码。前者是设置卡片与菜单结构的参考实现，后者是运行中的第三方插件——**不要改动它们的源码或安装副本**。
+- **只读约束**：`dsh-reasoning-summary` 与 `dsh-reasoning-level` 不是本插件的代码。前者是配置页与菜单结构的参考实现，后者是运行中的第三方插件——**不要改动它们的源码或安装副本**。
 - 本插件与 `dsh-reasoning-summary` 同时启用没有冲突：两者动作在不同层（本插件改 Responses 请求体的 `reasoning` 字段，对方管会话消息注入），`test/client.test.mjs` 里有一条把两个 bundle 拼在一起求值的回归测试，防止模块级标识符互相污染。
-- 用户主目录的 `~/.dsh/settings.yaml` 是**用户资产**：调试时只读、只哈希核对，不要用工具写它；验证配置行为请走设置服务或临时 profile。
+- 用户主目录的 `~/.dsh/profiles/web/cordis.patch.yml` 是**用户资产**：调试时只读、只哈希核对，不要用工具写它；验证配置行为请走设置界面或临时 profile。（0.1.7 起 `~/.dsh/settings.yaml` 已废弃，宿主的 `importLegacyDocument` 只负责一次性迁移。）
 
 ## 运行时依赖与版本
 
 | 包 | 角色 | 声明位置 |
 |---|---|---|
-| `@deepseek-ai/schemastery` | 唯一被真正 import 的值依赖（`z`） | `dependencies` |
-| `@deepseek-ai/cordis` | 上下文与插件框架（`Context` 类型） | `peerDependencies`（optional） |
-| `@deepseek-ai/dsh-settings` | `ctx.settings` 增强 + 设置注册 | `peerDependencies`（optional） |
+| `@deepseek-ai/schemastery` | 唯一被真正 import 的值依赖（`z`，含 `.volatile()`） | `dependencies`（`~3.18.4`） |
+| `@deepseek-ai/cordis` | 上下文与插件框架（`Context` / `Volatile` 类型） | `peerDependencies`（optional） |
 | `@deepseek-ai/dsh-llm` | `llm/stream` 事件名增强 | `peerDependencies`（optional） |
+| `@deepseek-ai/dsh-client-ui-primitives` | 浏览器半边 `require()` 的唯一官方包（图标 + `SettingsForm`） | `devDependencies` |
+| `@deepseek-ai/dsh-client-ui-plugin-manager`、`…-ui-settings` | 配置页槽契约与 `ConfigPageForm` 的**类型出处**（浏览器半边是 `any`，靠人工对照 `.d.ts`） | `devDependencies` |
 | `typescript`、`@types/node` | 工具链 | `devDependencies` |
 
-宿主包在 `devDependencies` 里**钉死到 `0.1.5-rc.1`**（`cordis` 钉 `4.0.2`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围会让人对着与线上不同的宿主做类型检查。基线版本：**DSH v0.1.5-rc.1**，Node 25.8.1，pnpm 11.21.0。
+宿主包在 `devDependencies` 里**钉死到 `0.1.7-rc.2`**（`cordis` 钉 `4.0.4`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围会让人对着与线上不同的宿主做类型检查与测试。`schemastery` 用 `~3.18.4`（官方插件的写法）：**它对运行时有实质影响**——`3.18.2` 没有 `.volatile()`，插件会在 `apply` 时抛 `TypeError`，而宿主与 loader 用的是 `3.18.4`。基线版本：**DSH v0.1.7-rc.2**，Node 25.8.1，pnpm 11.21.0。
+
+## 兼容性与准入闸门
+
+`peerDependencies` 写的是**意图声明**，不是兼容性证明：宿主 0.1.7 起的装载闸门只统计名字为 `@deepseek-ai/dsh-*` 的 peer，按 `semver.satisfies(runtime, range, { includePrerelease: true })` 判定。`includePrerelease` 让这条闸门比普通 semver 宽松得多——**本插件 0.1.5 时代的 `^0.1.5-rc.1` 在 `0.1.7-rc.2` 下照样通过**（实测：直接调用 `@deepseek-ai/dsh-app-boot` 导出的 `evaluatePluginCompatibility()` 得到 `undefined`，即 compatible）。所以：
+
+- **`incompatible-version` 警告只可能是跨 minor 漂移**，本插件这一轮根本没有被闸门拦过；把它当成"插件不兼容"的判据会误诊。
+- 真正的 0.1.5 → 0.1.7 断裂全是 **API 消失**：`ctx.settings.register`、`ctx.settingsScope`、`settings.plugin.item`、`settings.yaml`、数字后缀图标名。这些不产生任何闸门输出。
+- 排查别人报"启动说不兼容"时，**先看警告里的包名**。本机 web profile 的历史日志里被点名的是 `@michengai/dsh-archive-manager@0.1.44`（peer 是一个不含 `0.1.7-rc.2` 的精确版本并集），本插件从未出现在其中。
+- `^0.1.7-rc.2` 会放行 `0.1.7` 正式版与 `0.1.8-rc.*`，只拦跨 minor（`0.2.x`）。要更严就写精确版本，代价是每次宿主升级都会被拦下。
+- **检查方法**：`evaluatePluginCompatibility(manifest)` 就是装载时真正调用的函数，直接拿本包的 `package.json` 调它，比人眼比范围可靠（含 `includePrerelease` 的宽松度，也含 `workspace:*` 这类特例）。
 
 ## 许可证
 

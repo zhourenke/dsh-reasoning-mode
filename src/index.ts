@@ -3,20 +3,20 @@
  *
  * Configures the `reasoning.mode` and `reasoning.summary` fields of OpenAI
  * Responses requests for explicitly enabled provider/model routes. The host
- * half owns the durable model selection (a settings namespace limited to
- * `models`) and wraps the final Host `fetch` boundary, associating each
- * request with the exact provider/model observed through Responses session
- * affinity. The browser half (src/client.ts) provides the checkbox-only
- * settings card and the composer control in `conversation.input.right`.
+ * half owns the durable route selection — the profile entry's own `models`
+ * configuration, declared as a volatile schema so the running plugin reads the
+ * live value the settings form wrote — and wraps the final Host `fetch`
+ * boundary, associating each request with the exact provider/model observed
+ * through Responses session affinity. The browser half (src/client.ts)
+ * provides the configuration page of that row and the composer control in
+ * `conversation.input.right`.
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-llm'
-import type {} from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 
 export const name = 'reasoning-mode'
-export const SETTINGS_NAMESPACE = 'reasoning-mode'
 
 export type ReasoningMode = 'standard' | 'pro'
 export type ReasoningSummary = 'auto' | 'concise' | 'detailed'
@@ -26,11 +26,6 @@ export interface ModelSettings {
   model: string
   mode: ReasoningMode
   summary: ReasoningSummary
-}
-
-export interface ReasoningModeConfig {
-  /** Presence in this list means the exact provider/model route is enabled. */
-  models: ModelSettings[]
 }
 
 export interface ReasoningSelection {
@@ -56,38 +51,48 @@ export function routeKey(route: RequestRoute): string {
   return `${route.provider}\u0000${route.model}`
 }
 
-const configSchema = z.transform(
-  z.object({
-    models: z.array(ModelSettingsSchema).default([]),
-  }),
-  (value) => {
-    // Keep this callback self-contained: Settings serializes and rehydrates it
-    // in the browser, where module-local helpers are not available.
-    const models: ModelSettings[] = []
-    const seen = new Set<string>()
-    for (const model of value.models ?? []) {
-      if (typeof model.provider !== 'string' || typeof model.model !== 'string' || !model.provider || !model.model) continue
-      const key = `${String(model.provider ?? '')}\u0000${String(model.model ?? '')}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      models.push({
-        provider: model.provider,
-        model: model.model,
-        mode: model.mode === 'standard' || model.mode === 'pro' ? model.mode : 'standard',
-        summary: model.summary === 'auto' || model.summary === 'concise' || model.summary === 'detailed' ? model.summary : 'auto',
-      })
-    }
-    return { models }
-  },
-  true,
-).default({ models: [] })
+/**
+ * The profile entry's configuration. `models` is volatile, so the loader hands
+ * `apply` one stable reference and updates its value in place when the settings
+ * page writes; the running plugin therefore reads the live list rather than a
+ * value captured once at apply time.
+ */
+export const Config = z.object({
+  models: z.array(ModelSettingsSchema).default([]).volatile(),
+}) as unknown as ReturnType<typeof z.any>
 
-// Keep the public declaration independent of schemastery's internal generic path.
-export const Config = configSchema as unknown as ReturnType<typeof z.any>
+/** The resolved shape the loader passes to {@link apply}. */
+export interface PluginConfig {
+  models: Volatile<ModelSettings[]>
+}
 
-function settingsByRoute(config: ReasoningModeConfig | undefined): Map<string, ReasoningSelection> {
+/**
+ * Normalize a stored route list: drop entries that name no provider or model,
+ * collapse repeated exact routes, and coerce an unusable enum back to its default.
+ */
+export function normalizeModels(value: unknown): ModelSettings[] {
+  const models: ModelSettings[] = []
+  const seen = new Set<string>()
+  for (const model of Array.isArray(value) ? value : []) {
+    if (!isRecord(model)) continue
+    const { provider, model: id } = model
+    if (typeof provider !== 'string' || typeof id !== 'string' || !provider || !id) continue
+    const key = routeKey({ provider, model: id })
+    if (seen.has(key)) continue
+    seen.add(key)
+    models.push({
+      provider,
+      model: id,
+      mode: model.mode === 'pro' ? 'pro' : 'standard',
+      summary: model.summary === 'concise' || model.summary === 'detailed' ? model.summary : 'auto',
+    })
+  }
+  return models
+}
+
+function settingsByRoute(models: readonly ModelSettings[] | undefined): Map<string, ReasoningSelection> {
   const result = new Map<string, ReasoningSelection>()
-  for (const model of config?.models ?? []) {
+  for (const model of models ?? []) {
     result.set(routeKey(model), { mode: model.mode, summary: model.summary })
   }
   return result
@@ -454,27 +459,13 @@ function installFetchWrapper(
   }
 }
 
-export const inject = ['settings']
+export const inject: string[] = []
 
-export function apply(ctx: Context): void {
-  const settings = ctx.settings
-  let current: ReasoningModeConfig = {
-    models: [],
-  }
-
-  let scope: ReturnType<typeof settings.register>
-  try {
-    scope = settings.register(SETTINGS_NAMESPACE, Config)
-    current = scope.get() as ReasoningModeConfig
-  } catch (error) {
-    ctx.logger?.warn(`reasoning-mode: settings registration failed; feature disabled: ${String(error)}`)
-    return
-  }
-
-  const getSettings = () => settingsByRoute(current)
-  scope.watch((next: unknown) => {
-    current = next as ReasoningModeConfig
-  })
+export function apply(ctx: Context, config: PluginConfig): void {
+  // Read the volatile reference on every request: that is what makes a saved
+  // edit effective without re-applying the plugin, and it replaces the
+  // settings subscription this plugin used before the loader owned live config.
+  const getSettings = (): Map<string, ReasoningSelection> => settingsByRoute(normalizeModels(config.models.get()))
 
   const reportedAmbiguities = new Set<string>()
   const reportAmbiguous = (model: string, candidates: readonly RequestRoute[]) => {

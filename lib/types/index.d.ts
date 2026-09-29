@@ -3,16 +3,17 @@
  *
  * Configures the `reasoning.mode` and `reasoning.summary` fields of OpenAI
  * Responses requests for explicitly enabled provider/model routes. The host
- * half owns the durable model selection (a settings namespace limited to
- * `models`) and wraps the final Host `fetch` boundary, associating each
- * request with the exact provider/model observed through Responses session
- * affinity. The browser half (src/client.ts) provides the checkbox-only
- * settings card and the composer control in `conversation.input.right`.
+ * half owns the durable route selection — the profile entry's own `models`
+ * configuration, declared as a volatile schema so the running plugin reads the
+ * live value the settings form wrote — and wraps the final Host `fetch`
+ * boundary, associating each request with the exact provider/model observed
+ * through Responses session affinity. The browser half (src/client.ts)
+ * provides the configuration page of that row and the composer control in
+ * `conversation.input.right`.
  */
-import type { Context } from '@deepseek-ai/cordis';
+import type { Context, Volatile } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 export declare const name = "reasoning-mode";
-export declare const SETTINGS_NAMESPACE = "reasoning-mode";
 export type ReasoningMode = 'standard' | 'pro';
 export type ReasoningSummary = 'auto' | 'concise' | 'detailed';
 export interface ModelSettings {
@@ -20,10 +21,6 @@ export interface ModelSettings {
     model: string;
     mode: ReasoningMode;
     summary: ReasoningSummary;
-}
-export interface ReasoningModeConfig {
-    /** Presence in this list means the exact provider/model route is enabled. */
-    models: ModelSettings[];
 }
 export interface ReasoningSelection {
     mode: ReasoningMode;
@@ -34,7 +31,22 @@ export interface RequestRoute {
     model: string;
 }
 export declare function routeKey(route: RequestRoute): string;
+/**
+ * The profile entry's configuration. `models` is volatile, so the loader hands
+ * `apply` one stable reference and updates its value in place when the settings
+ * page writes; the running plugin therefore reads the live list rather than a
+ * value captured once at apply time.
+ */
 export declare const Config: ReturnType<typeof z.any>;
+/** The resolved shape the loader passes to {@link apply}. */
+export interface PluginConfig {
+    models: Volatile<ModelSettings[]>;
+}
+/**
+ * Normalize a stored route list: drop entries that name no provider or model,
+ * collapse repeated exact routes, and coerce an unusable enum back to its default.
+ */
+export declare function normalizeModels(value: unknown): ModelSettings[];
 /** Apply only the plugin-owned reasoning fields and retain every other field. */
 export declare function applyReasoningBody(body: Record<string, unknown>, selection: ReasoningSelection): Record<string, unknown>;
 /**
@@ -44,5 +56,5 @@ export declare function applyReasoningBody(body: Record<string, unknown>, select
 export declare function resolveRouteCandidate(candidates: readonly RequestRoute[], model: string): RequestRoute | undefined;
 declare function isResponsesRequest(url: string, method: string): boolean;
 export declare const inject: string[];
-export declare function apply(ctx: Context): void;
+export declare function apply(ctx: Context, config: PluginConfig): void;
 export { isResponsesRequest };
