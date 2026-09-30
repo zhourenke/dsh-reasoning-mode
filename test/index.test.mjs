@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readdirSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -396,5 +397,48 @@ test('does not rewrite an ambiguous same-model request and restores after stream
     assert.equal(globalThis.fetch, stubFetch)
   } finally {
     globalThis.fetch = originalFetch
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Manifest contract
+//
+// The host reads the display metadata and the icon WITHOUT activating the
+// plugin, so no runtime test can reach it: the page can be perfect while the
+// plugin list carries no name, no description and no icon. The failure is also
+// asymmetric — a bad icon only drops the icon, while an empty or non-string
+// title/description makes the whole read fail and takes the icon with it.
+// ---------------------------------------------------------------------------
+
+const packageRoot = new URL('..', import.meta.url)
+const manifest = JSON.parse(readFileSync(new URL('package.json', packageRoot), 'utf8'))
+
+test('the display metadata the plugin list shows is declared and valid', () => {
+  // `locale/*.json` resolves through the package `exports` map, and neither the
+  // dictionaries nor the icon belong to the auto-included set.
+  assert.equal(manifest.icon, './icon.svg', 'icon field points at the icon')
+  assert.equal(
+    manifest.exports['./locale/*.json'],
+    './locale/*.json',
+    'locale dictionaries resolve through exports',
+  )
+  for (const entry of ['icon.svg', 'locale/*.json']) {
+    assert.ok(manifest.files.includes(entry), `files lists ${entry}`)
+  }
+
+  const icon = readFileSync(new URL(manifest.icon, packageRoot))
+  assert.ok(icon.byteLength > 0, 'the icon is not empty')
+  assert.ok(icon.byteLength <= 256 * 1024, 'the icon is within the 256 KiB limit')
+  assert.match(icon.toString('utf8'), /^<svg[\s>]/, 'the icon is an SVG document')
+
+  const localeDir = new URL('locale/', packageRoot)
+  const dictionaries = readdirSync(localeDir).filter((file) => file.endsWith('.json'))
+  assert.ok(dictionaries.length > 0, 'at least one dictionary exists')
+  for (const file of dictionaries) {
+    const dict = JSON.parse(readFileSync(new URL(file, localeDir), 'utf8'))
+    assert.equal(typeof dict.meta?.title, 'string', `${file} carries a title`)
+    assert.ok(dict.meta.title.length > 0, `${file} title is not empty`)
+    assert.equal(typeof dict.meta?.description, 'string', `${file} carries a description`)
+    assert.ok(dict.meta.description.length > 0, `${file} description is not empty`)
   }
 })

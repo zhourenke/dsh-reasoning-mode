@@ -18,9 +18,11 @@ README 是刻意精简的：上述四类内容曾经在 README 里，按要求�
 | `lib/client.js` | 浏览器编译产物，**必须提交** |
 | `lib/types/index.d.ts` | 宿主类型声明，**必须提交** |
 | `lib/types/client.d.ts` | 浏览器类型声明，**必须提交** |
-| `test/index.test.mjs` | 宿主半边（9 项）：schema 归一化、请求改写、路由解析、fetch 包装与还原、模块契约 |
-| `test/client.test.mjs` | 浏览器半边（13 项）：**真正执行** `lib/client.js`，含配置页挂载、摘要视图、带修订号的写入、未 ready / 无 form 分支、session 默认模型 fallback 与无 session 分支 |
+| `test/index.test.mjs` | 宿主半边（11 项）：schema 归一化、请求改写、路由解析、fetch 包装与还原、模块契约、清单契约（显示元数据） |
+| `test/client.test.mjs` | 浏览器半边（16 项）：**真正执行** `lib/client.js`，含配置页挂载、摘要视图、带修订号的写入、未 ready / 无 form 分支、session 默认模型 fallback 与无 session 分支 |
 | `cordis.patch.yml` | profile 层插入声明（`- insert:` 形式） |
+| `icon.svg` | 插件列表的图标：顶层 `icon` 指向它，宿主直接读成内联 data URL（不经过代码） |
+| `locale/en.json`、`locale/zh.json` | 插件列表的显示名与说明（`{"meta":{"title","description"}}`，**文件名即语言 id**）；同样是宿主直接读盘（见 §18） |
 | `tsconfig.json` | 宿主半边配置（Node，无 DOM） |
 | `tsconfig.client.json` | 浏览器半边配置（DOM，无 Node 类型） |
 | `pnpm-lock.yaml` | 一并提交；`package.json` 的依赖声明改动会让它跟着变（见发布纪律） |
@@ -250,9 +252,33 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 
 `--dsh-composer-model-text-display` / `--dsh-composer-model-icon-display` 这两个变量**故意不接**：官方 `dsh-client-ui-conversation/README.md` 写的是控制栏在「展开的控件无法排在同一行」时**为模型位**（for the model seat）设置它们，默认值 `block`/`none`；套到本控件上等于自己扩大契约范围，而且会让本控件在窄宽度下只剩一个箭头。
 
-### 17. 文案只有一个落点，README 是第二落点
+### 17. 用户可见文案有两个落点，README 是第三处
 
-所有用户可见文案在 `src/client.ts` 的 `zh` / `en` 字典里，经 `locale.register(NS, { zh, en })` 注册；宿主警告是英文（进日志）。改文案时记得 README(zh/en) 里的对应描述也要跟着改——两处不会自动同步。README 里出现的界面用语（如「已保存但当前不可用」「保存」）必须与字典逐字一致。
+**界面里的文案**在 `src/client.ts` 的 `zh` / `en` 字典里，经 `locale.register(NS, { zh, en })` 注册；宿主警告是英文（进日志）。**插件列表里的名称与说明**是另一套机制、另一份文件——`locale/<语言>.json` 的 `meta`（见 §18），由宿主在**装载之前**直接读盘，`locale.register` 影响不到它。改文案时记得 README(zh/en) 里的对应描述也要跟着改——三处不会自动同步。README 里出现的界面用语（如「已保存但当前不可用」「保存」）必须与字典逐字一致。
+
+### 18. 插件列表的显示元数据由包内文件决定，运行时测试覆盖不到
+
+插件的名称、说明与图标**不经过代码执行**：宿主在装载前读包内文件（`readPluginMeta(specifier, parentURL)`）。三条契约缺一条的失败方式各不相同：
+
+| 元数据 | 落点 | 写错会怎样 |
+|---|---|---|
+| 名称与说明 | `locale/<语言>.json` 的 `{"meta":{"title","description"}}`，**文件名就是语言 id**（`en.json` / `zh.json`；重复 id 抛错） | **空值或非字符串会让整次读取抛错**，宿主捕获后返回 `{ error }`——名称、说明与图标**一起丢** |
+| 图标 | 顶层 `icon` 字段：相对路径，SVG/PNG/JPEG/WebP，≤256 KiB，realpath 后必须仍在包目录内 | 只降级成「没有图标」，文字照旧 |
+| 两者可达 | `exports` 补 `"./locale/*.json": "./locale/*.json"`（`locale` 走 `exports` 解析），`files` 补 `icon.svg` 与 `locale/*.json` | 解析/打包阶段就取不到：两者都不在 `files` 的自动包含集里 |
+
+当前值：`title` = 「推理模式与摘要等级」/ "Reasoning Mode & Summary"，说明见 `locale/zh.json`；图标是两条带滑块的轨道，与工作区其它插件同一套 24×24 描边风格（`#4F7CFF` 主色 + `#8A94A6` 副色、`fill="none"`）。字典只写 `meta`——宿主只读这两个键。
+
+**为什么单列一条**：这条路径完全不执行插件代码，所以 `apply` 的用例全绿、界面一切正常，插件列表里照样可能没有名字。**判据必须是宿主自己的函数**，不是"文件在不在"：
+
+```powershell
+# $dsh = 宿主的 @deepseek-ai 目录；parentURL 必须是"插件实际解析得到的那棵树"的基址
+# （连接点安装时就是 profile 的 package.json）。给错目录会返回 undefined 而不是报错——只看"有没有抛错"会假绿，
+# 要断言返回值里真的有 title / description / icon
+$dshU = $dsh -replace '\\','/'
+node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(async b => { const p = require('path'), u = require('url'); const parent = u.pathToFileURL(p.join(process.env.USERPROFILE, '.dsh/profiles/web/package.json')).href; const name = JSON.parse(require('fs').readFileSync('$cwdU/package.json','utf8')).name; console.log(JSON.stringify(b.readPluginMeta(name, parent))); })"
+```
+
+`test/index.test.mjs` 有一条清单契约用例把前两行钉住（`icon` 字段、`exports` 子路径、`files` 条目、每份字典的 `meta.title` / `meta.description` 非空），但它**只能证明文件写对了，证明不了宿主读得到**——后者只能靠上面这条命令。
 
 ## 客户端半边的降级状态
 
@@ -297,13 +323,14 @@ pnpm run build
 pnpm test
 git status --porcelain            # 构建后必须为空
 
-git ls-files cordis.patch.yml lib/index.js lib/types/index.d.ts lib/client.js lib/types/client.d.ts
+git ls-files cordis.patch.yml icon.svg locale/en.json locale/zh.json lib/index.js lib/types/index.d.ts lib/client.js lib/types/client.d.ts
+# 声明过的入口（含 `icon`）与 `files` 的每一条都必须真的出现在载荷里——发布指南「提交前验证清单」有一段把这两个方向都变成会 throw 的断言
 
-# 载荷：9 个文件（README.md 与 README.en.md 都由 README* 自动包含）
+# 载荷：12 个文件（README.md 与 README.en.md 都由 README* 自动包含）
 pnpm pack --dry-run
 ```
 
-- **`files` 只列必须发布的产物**：`lib/index.js`、`lib/client.js`、`lib/types/**/*.d.ts`、`cordis.patch.yml`。`README.md`、`README.en.md`、`package.json` 属于自动包含集，列进去是空操作条目；`DEVELOPMENT.md` **两边都不沾**（既不被 `files` 匹配，也不在自动包含集），所以它只留在仓库里，不进安装载荷——README 里因此不要链接它（对载荷读者是死链）。
+- **`files` 只列不会被自动包含的产物**：`lib/index.js`、`lib/client.js`、`lib/types/**/*.d.ts`、`cordis.patch.yml`、`icon.svg`、`locale/*.json`。`README.md`、`README.en.md`、`package.json`、`LICENSE` 与 `main` 指向的文件属于自动包含集，列进去是空操作条目；**`icon.svg` 与 `locale/*.json` 恰恰不在自动包含集里**，漏掉它们插件列表就只剩一个名字（见 §18）。`DEVELOPMENT.md` **两边都不沾**（既不被 `files` 匹配，也不在自动包含集），所以它只留在仓库里，不进安装载荷——README 里因此不要链接它（对载荷读者是死链）。
 - **改了 README 就要同步另一份，并做结构对账**：`README.md`（中文）与 `README.en.md`（英文）的章节数、表格数与表头列数必须 1:1，命令里的包名与路径逐字一致；再扫一遍兄弟插件的专有名词（`<summary>` 标签、`reasoning-summary`、注入上下文提示等），它们会在照搬结构时被一起搬进来。
 
 ```powershell
@@ -382,7 +409,7 @@ peer dsh-llm = ^0.2.0-rc.2 -> 兼容
 - **服务**：`configForms` / `slots` / `locale` / `remote` / `remote.session` 都还在；`modelCatalog` RPC 仍在 `@deepseek-ai/dsh-api-remotes`（`method: "modelCatalog"`）；`modelSelection` 投影仍是 `{lastUsed, next}`（每个元素多了可选的 `reasoningEffort`，我们忽略）；`locale.register(ns, dicts)` 与 `locale.bind(ns)` 签名不变。
 - **宿主半边**：`llm/stream` 仍是 waterfall（`dsh-llm/lib/index.js` 里 `this.ctx.waterfall(this, "llm/stream", options, …)`），事件表里也是唯一与请求相关的那个；`Volatile` 仍从 cordis 导出、`Config` 仍是 `export const Config`；`schemastery` 仍是 `~3.18.4` 单副本（宿主全部包声明唯一范围，本包 `pnpm why` 只有一份）；`cordis` 仍是 `4.0.4`。
 - **排序依赖的官方哈希类名**：本插件 CSS 里那两条 `:has()` 规则挂的 `uV2eYG_trailing` / `uV2eYG_primary` 在 0.2.0 的 `dsh-client-ui-conversation` 里**哈希未变**（CSS-module 哈希按内容生成，源码没动就不动）。这类依赖失效的症状是**控件顺序错乱而不是报错**，所以每次升级都要按名字重取一次。
-- **清单**：`dsh.bundle.patch` / `dsh.client.platform` / `dsh.client.inject` 的字段形状与官方伴随包（`dsh-client-ui-settings-web-search`）逐字一致，六个被 inject 的包在 0.2.0 全部存在；`readPluginMeta()` 能读出 title 与 description（无 `icon`，本包没有图标资源，卡片走官方默认插画）。profile 的豁免表为空（`exemptions = {}`），所以闸门结果是真的。
+- **清单**：`dsh.bundle.patch` / `dsh.client.platform` / `dsh.client.inject` 的字段形状与官方伴随包（`dsh-client-ui-settings-web-search`）逐字一致，六个被 inject 的包在 0.2.0 全部存在。**当时对 `readPluginMeta()` 的核对只做到"读得出 title 与 description"就收工**——那其实是 `package.json` 的 `name` / `description` 回退值，不是本地化元数据，而且本包根本没有图标资源（卡片走官方默认插画）；此后补上了 `locale/{en,zh}.json` 与 `icon.svg`，现在返回的是 `{ "title": {"en","zh"}, "description": {"en","zh"}, "icon": "data:image/svg+xml;base64,…" }`（判据与失败模式见 §18）。profile 的豁免表为空（`exemptions = {}`），所以闸门结果是真的。
 
 **变了 / 新增的**
 

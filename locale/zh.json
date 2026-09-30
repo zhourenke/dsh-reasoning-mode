@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "推理模式与摘要等级",
+    "description": "按 provider/model 指定 Responses 请求的推理模式与摘要等级，并可在输入栏直接切换这两项。"
+  }
+}

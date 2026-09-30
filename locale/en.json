@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Reasoning Mode & Summary",
+    "description": "Set the Responses reasoning mode and summary level per provider/model, and switch both straight from the composer."
+  }
+}
