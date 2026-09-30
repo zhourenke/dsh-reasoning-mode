@@ -383,6 +383,7 @@ peer dsh-llm = ^0.2.0-rc.2 -> 兼容
 - **`plugins.item` 的文档现在写死了归属**：bundle 的配置应落在 `plugins.bundle.config` 或 `plugins.row.config`，等于把我们上一轮的座位选择变成了官方明文。
 - **reasoning effort 变成一等能力**：适配器在模型信息里自报 `reasoning: { efforts: [{id,name,description}], defaultEffort }`，`resolveCallWithInfo` 会**在发起 I/O 之前拒绝**模型不支持的显式 effort；pi-ai 侧还有 profile 的 `reasoningEfforts` 字典 → `thinkingLevelMap` 映射。**本插件不实现 effort（那会是重复造轮子），菜单里只有官方没有入口的 `mode` 与 `summary` 两项。**
 - **本轮真正剥离掉的一处重复：自备译函数。** 上一版两个座位都在 `apply` 里 `locale.bind(NS)`、再把 `t` 展开进组件 props；渲染器源码显示声明了 `locale:` 的 entry 本来就会拿到 `kit.t = localeSeat(face, ns)`（即 `face.bind(ns)` 的缓存包装），locale face 缺失时它还要**抛 `SlotAssemblyError`**——所以这是同一个 prop 上的第二条路径。现在源码里不出现 `locale.bind`，组件读座位给的 `props.t`，测试桩按渲染器规则拼 kit 并用断言把这条钉住（见 §12 的座位依据）。
+- **插件的界面入口换了地方（用户可见，README 必须跟着改）。** 0.1.7 里配置页在设置页的"插件"入口下，0.2.0 把它改成**左侧工作区顶部的「插件」选项卡**：`dsh-client-ui-plugin-manager` 现在把面板注册进 `sidebar.panellist`（`{ id: PANEL_ID, order: 0, label: () => t("panel"), locale: NS }`），页面主体进 `main`。**座位与派发机制一点没变**——行详情页仍是官方 `RowDetail` 渲染 `renderSlot("plugins.row.config", { view: "page", form })`，行的"配置"按钮仍以 `ledger.rows.has(rowConfigKey(pkg.name, row.rowId))` 为显示条件（我们的注册在 `whileServed` 生效后才存在，所以**注册没起来时用户看到的是一个没有入口的行**）。插件代码因此不用改，要改的是 README 里"去哪儿点"那句：**插件选项卡 → `@zhourenke/dsh-reasoning-mode` 包页面 → 「包含的组件」列表 → `reasoning-mode` 行的「配置」**（官方文案 `configureRow: "配置 {name}"`，列表标题 `partsLabel: "包含的组件"`，返回键 `backToPackage`）。
 
 **判过但不采用的官方件（"不重复造轮子"的另一面：也不为了显得在融合而硬接）**
 

@@ -22,7 +22,7 @@ GPT models that speak the OpenAI Responses protocol. Models on Chat Completions,
 dsh plugin --profile web add "github:zhourenke/dsh-reasoning-mode"
 ```
 
-After installing, **restart DSH and refresh the page** (the host half is loaded when the process starts, and the browser half snapshots its bundle when the plugin activates). The plugin's configuration page then lives under **Settings → Plugins → `@zhourenke/dsh-reasoning-mode` → the `reasoning-mode` row's Configure control**.
+After installing, **restart DSH and refresh the page** (the host half is loaded when the process starts, and the browser half snapshots its bundle when the plugin activates). The plugin's configuration page then lives behind the **Plugins** tab at the top of the left workspace sidebar: open `@zhourenke/dsh-reasoning-mode` and click **Configure** on the `reasoning-mode` row under **Components**. (That interface moved out of the settings page in 0.2.0.)
 
 Uninstall:
 
@@ -32,7 +32,7 @@ dsh plugin --profile web remove @zhourenke/dsh-reasoning-mode
 
 ## Quick start
 
-1. Open **Settings → Plugins → `@zhourenke/dsh-reasoning-mode`**, click **Configure** on that row, check the `provider/model` routes this plugin should rewrite, and click **Save**.
+1. Open the **Plugins** tab at the top of the left workspace sidebar, enter `@zhourenke/dsh-reasoning-mode`, click **Configure** on the `reasoning-mode` row under **Components**, check the `provider/model` routes this plugin should rewrite, and click **Save**.
 2. Open a conversation and switch the model to one of the checked routes in the model selector.
 3. Pick the **reasoning mode** and the **summary level** you want in the label that appears on the right.
 

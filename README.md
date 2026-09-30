@@ -22,7 +22,7 @@ DSH 自带 adapter 提供的 `reasoningEffort`（每个模型的推理档位）�
 dsh plugin --profile web add "github:zhourenke/dsh-reasoning-mode"
 ```
 
-安装后需要**重启 DSH 并刷新页面**（宿主半边在进程启动时装载，浏览器半边在插件激活时取一次产物），然后在 **设置 → 插件 → `@zhourenke/dsh-reasoning-mode` → `reasoning-mode` 行的「配置」** 打开本插件的配置页。
+安装后需要**重启 DSH 并刷新页面**（宿主半边在进程启动时装载，浏览器半边在插件激活时取一次产物），然后在左侧工作区顶部的 **插件** 选项卡里找到 `@zhourenke/dsh-reasoning-mode`，在它页面的 **包含的组件** 列表中点 `reasoning-mode` 那一行的 **配置**，即可打开本插件的配置页。（0.2.0 起插件界面在这里，不在设置页里。）
 
 卸载：
 
@@ -32,7 +32,7 @@ dsh plugin --profile web remove @zhourenke/dsh-reasoning-mode
 
 ## 快速上手
 
-1. 打开 **设置 → 插件 → `@zhourenke/dsh-reasoning-mode`**，在该行点**配置**，在模型目录里勾选要让插件改写的 `provider/model`，点**保存**。
+1. 打开左侧工作区顶部的 **插件** 选项卡，进入 `@zhourenke/dsh-reasoning-mode`，在 **包含的组件** 里点 `reasoning-mode` 行的 **配置**，在模型目录里勾选要让插件改写的 `provider/model`，点**保存**。
 2. 打开一个会话，在模型选择器中把模型切到刚才勾选的路由。
 3. 在输入栏右侧出现的标签中选择想要的 **推理模式** 与 **摘要等级**。
 
