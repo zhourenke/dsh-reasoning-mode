@@ -34,7 +34,7 @@ dsh plugin --profile web remove @zhourenke/dsh-reasoning-mode
 
 1. 打开左侧工作区顶部的 **插件** 选项卡，进入 `@zhourenke/dsh-reasoning-mode`，在 **包含的组件** 里点 `reasoning-mode` 行的 **配置**，在模型目录里勾选要让插件改写的 `provider/model`，点**保存**。
 2. 打开一个会话，在模型选择器中把模型切到刚才勾选的路由。
-3. 在输入栏右侧出现的标签中选择想要的 **推理模式** 与 **摘要等级**。
+3. 点开输入栏右侧出现的标签：卡片上半是 **推理模式**（Standard / Pro），下半是 **摘要等级**（Auto / Concise / Detailed）；当前取值带勾，点一下就生效（没有保存按钮）。
 
 新勾选的路由默认 `Standard` + `Auto`；取消勾选再重新勾选会保留原来的值。
 

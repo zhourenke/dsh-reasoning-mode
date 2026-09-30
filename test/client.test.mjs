@@ -5,7 +5,7 @@ import vm from 'node:vm'
 
 // ---------------------------------------------------------------------------
 // The host contracts this file models, as measured from the installed
-// 0.1.7-rc.2 packages. Keep the citations when editing: a mock that drifts from
+// 0.2.0-rc.2 packages. Keep the citations when editing: a mock that drifts from
 // the real contract hides defects instead of catching them (a "false green" —
 // see PLUGIN_RELEASE_GUIDE.md -> guide/verification-method.md "验证本身也会骗你").
 //
@@ -60,6 +60,26 @@ import vm from 'node:vm'
 //    owner props are `{}`. `sessionId === undefined` is the no-Session inert
 //    composer, which is why the fallback must not fire there.
 //
+// 7. The composer control is the official `Menu` primitive, driven as data:
+//    `items` rows, `{ type: 'label' }` headings, `{ type: 'separator' }`
+//    hairlines, `selectedIds` for independent option groups, and the primitive's
+//    own trailing check (`Menu.d.ts`; `Menu.module.css` `.item` / `.itemIcon` /
+//    `.itemLabel` / `.check` / `.label` / `.separator`). Its nested `submenu`
+//    card is NOT used and must not be: it is `position: absolute; bottom: -4px;
+//    left: calc(100% + 10px)` inside the parent card (`Menu.module.css`
+//    `.submenu`), so from the composer's right-most control — whose card is
+//    already clamped 12px from the viewport's right edge (`Menu.tsx` MARGIN) —
+//    a second level can only ever render off the screen. Nested rows are also
+//    the one place the primitive draws no check.
+//
+// 8. The trigger's measurements and colors are the official model seat's, the
+//    control the composer actually puts on that line
+//    (`dsh-client-ui-model-selection/lib/client.js` css: `.trigger` weight 400,
+//    `label-secondary`, `radius-sm`, `min(360px, 45cqw)`, focus ring
+//    `--dsw-focus-ring-color`; `.triggerEffort` `label-caption`; `.chevron`
+//    `label-caption` plus the 180° open rotation). `StateDot state="ongoing"`
+//    replaces that chevron while the seat's write is in flight.
+//
 // NOT modelled here: React's reconciler and full hook semantics (the default
 // stub only invokes lazy state initializers and memo callbacks), the host's real
 // slot registry, and the page that dispatches the slots. The focused tests below
@@ -90,12 +110,13 @@ function makeRequire(options = {}) {
   const requested = []
   const elements = []
   const primitives = {
-    IconChevronDownOutlineRegular: () => ({}),
-    IconChevronRightOutlineRegular: () => ({}),
-    IconCheckOutlineRegular: () => ({}),
-    // The official menu: this plugin hands it the rows and owns nothing else.
+    // The official menu: this plugin hands it the rows and owns nothing else —
+    // each row's fill, the group headings, the hairlines and the trailing check
+    // are all the primitive's (`Menu.module.css`).
     Menu: () => null,
     SettingsForm: () => null,
+    IconChevronDownOutlineRegular: () => ({}),
+    StateDot: () => ({}),
   }
   const React = options.React ?? {
     createElement: (component, props, ...children) => {
@@ -146,7 +167,7 @@ function makeCtx(options = {}) {
   const handle = Object.assign({
     getSnapshot: () => form.state,
     subscribe: () => () => {},
-    set: async (field, value) => { sets.push({ field, value }); return true },
+    set: options.set ?? (async (field, value) => { sets.push({ field, value }); return true }),
   }, form)
   // The renderer composes every entry's kit, and the translator is part of it:
   // an entry that declares `locale:` gets `kit.t = localeSeat(face, ns)` — the
@@ -278,6 +299,16 @@ const settle = async () => {
   await new Promise((resolve) => setImmediate(resolve))
 }
 
+/**
+ * Strip comments from a source or bundle text. `tsc` keeps every comment in the
+ * built bundle, and several assertions below check that an identifier is *gone*;
+ * without this, the prose that records why an approach was rejected would read as
+ * its presence.
+ */
+function withoutComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+}
+
 test('registers the row configuration page and the composer control', () => {
   const { require } = makeRequire()
   const plugin = definition.factory(require)
@@ -308,30 +339,46 @@ test('builds the composer menu from the official primitive and re-implements not
   // shadow that identical prop, so the source must contain none.
   assert.equal((source.match(/locale: NS,/g) ?? []).length, 2)
   assert.doesNotMatch(source, /locale\.bind/)
-  // The nested cards, the placement, the portal, outside click, Escape, the
-  // arrow walk and the focus return are the official Menu's (contract fact 7).
-  assert.match(source, /^\s+Menu,$/m)
-  assert.match(source, /return e\(Menu, \{/)
-  assert.match(source, /listClassName: 'rm-control-menu'/)
-  assert.match(source, /side: 'top'/)
-  assert.match(source, /align: 'end'/)
-  assert.match(source, /portal: true/)
-  assert.match(source, /submenu,/)
+  // One flat official card: two group headings, the five option rows, and a
+  // hairline between the groups (contract fact 7). Both selections are marked by
+  // the primitive (`selection: 'check'` + `selectedIds`), so the plugin stages no
+  // glyph of its own.
+  assert.match(source, /type: 'label', id: 'label:mode', text: t\('modeLabel'\)/)
+  assert.match(source, /type: 'label', id: 'label:summary', text: t\('summaryLabel'\)/)
+  assert.match(source, /type: 'separator', id: 'separator:groups'/)
+  assert.match(source, /selection: 'check'/)
+  assert.match(source, /selectedIds: \[`mode:\$\{config\.mode\}`, `summary:\$\{config\.summary\}`\]/)
   assert.match(source, /onSelect: update/)
   assert.match(source, /'mode:pro': \{ mode: 'pro' \}/)
   assert.match(source, /'summary:detailed': \{ summary: 'detailed' \}/)
-  // A nested row carries only icon, label and shortcut, so the leaf's mark
-  // stays inside the label; the primitive draws primary-row checks itself.
-  assert.match(source, /rm-option-check/)
-  assert.match(source, /\.rm-cell-value \{[^}]*margin-left: auto;/)
+  // The nested side card is unreachable from this anchor and must not come back,
+  // with the hand-rolled row/cell/check markup it needed.
+  const code = withoutComments(source)
+  const bundleCode = withoutComments(bundle)
+  assert.doesNotMatch(code, /submenu/)
+  assert.doesNotMatch(code, /rm-cell|rm-option/)
+  assert.doesNotMatch(bundleCode, /rm-cell|rm-option|submenu/)
+  // The trigger copies the official model seat's tokens verbatim (fact 8), and
+  // the card hands its height budget to the primitive instead of clipping.
+  assert.match(source, /\.rm-control-trigger \{[^}]*font-weight: 400;/)
+  assert.match(source, /\.rm-control-trigger \{[^}]*color: var\(--dsw-alias-label-secondary\);/)
+  assert.match(source, /\.rm-control-trigger \{[^}]*border-radius: var\(--dsw-radius-sm\);/)
+  assert.match(source, /\.rm-control-trigger \{[^}]*max-width: min\(360px, 45cqw\);/)
+  assert.match(source, /\.rm-control-trigger:focus-visible \{ box-shadow: 0 0 0 2px var\(--dsw-focus-ring-color, var\(--dsw-alias-state-business-primary\)\); \}/)
+  assert.match(source, /\.rm-control-effort \{[^}]*color: var\(--dsw-alias-label-caption\);/)
+  assert.match(source, /\.rm-control-chevron \{[^}]*color: var\(--dsw-alias-label-caption\);/)
+  assert.match(source, /\.rm-control-menu \{[^}]*max-width: min\(420px, calc\(100vw - 32px\)\); \}/)
+  assert.doesNotMatch(source, /\.rm-control-menu \{[^}]*overflow: hidden/)
+  // Dead rules and dead keys may not linger either.
+  assert.doesNotMatch(code, /rm-readonly/)
+  assert.doesNotMatch(code, /menuLabel/)
   // Nothing here re-implements what the primitive owns.
   assert.doesNotMatch(source, /rm-menu|createPortal|ReactDOM|mousedown|useLayoutEffect|getBoundingClientRect|aria-controls/)
-  assert.doesNotMatch(bundle, /rm-menu|createPortal|ReactDOM|mousedown|getBoundingClientRect/)
-  assert.match(bundle, /rm-cell-value[^}]*label-tertiary/)
-  assert.match(bundle, /rm-option-check/)
+  assert.doesNotMatch(bundleCode, /rm-menu|createPortal|ReactDOM|mousedown|getBoundingClientRect/)
+  assert.match(bundle, /rm-control-effort[^}]*label-caption/)
 })
 
-test('hands the official Menu two cells whose leaves are the only writes', async () => {
+test('hands the official Menu one flat card whose option rows are the only writes', async () => {
   const runner = makeHookRunner()
   const { require, primitives, requested } = makeRequire({ React: runner.React })
   const plugin = definition.factory(require)
@@ -354,14 +401,33 @@ test('hands the official Menu two cells whose leaves are the only writes', async
   assert.equal(menu.portal, true)
   assert.equal(menu.className, 'rm-control-root')
   assert.equal(menu.listClassName, 'rm-control-menu')
-  // Two submenu parents; every leaf carries the patch the primitive hands back.
-  assert.deepEqual(menu.items.map((item) => item.id), ['cell:mode', 'cell:summary'])
-  assert.deepEqual(menu.items[0].submenu.map((row) => row.id), ['mode:standard', 'mode:pro'])
-  assert.deepEqual(menu.items[1].submenu.map((row) => row.id), ['summary:auto', 'summary:concise', 'summary:detailed'])
-  // The trigger stays the anchor the primitive returns focus to.
-  assert.equal(menu.anchor.props['aria-haspopup'], 'menu')
-  assert.equal(menu.anchor.props['aria-expanded'], false)
-  assert.equal(menu.anchor.props.disabled, false)
+  // Two headings, two independent option groups, one hairline between them.
+  assert.deepEqual(menu.items.map((item) => item.id), [
+    'label:mode', 'mode:standard', 'mode:pro', 'separator:groups',
+    'label:summary', 'summary:auto', 'summary:concise', 'summary:detailed',
+  ])
+  assert.equal(menu.items[0].type, 'label')
+  assert.equal(menu.items[0].text, 'reasoning-mode:modeLabel')
+  assert.equal(menu.items[3].type, 'separator')
+  assert.equal(menu.items[4].text, 'reasoning-mode:summaryLabel')
+  assert.deepEqual(menu.items.slice(1, 3).map((item) => item.label), ['reasoning-mode:standard', 'reasoning-mode:pro'])
+  // The primitive marks both current values itself; the plugin supplies no glyph.
+  assert.equal(menu.selection, 'check')
+  assert.deepEqual(menu.selectedIds, ['mode:standard', 'summary:auto'])
+  // The trigger stays the anchor the primitive returns focus to: the value, the
+  // summary, and the chevron — no separator of our own (contract fact 8).
+  const trigger = menu.anchor
+  assert.equal(trigger.props.className, 'rm-control-trigger')
+  assert.equal(trigger.props['aria-haspopup'], 'menu')
+  assert.equal(trigger.props['aria-expanded'], false)
+  assert.equal(trigger.props['aria-busy'], false)
+  assert.equal(trigger.props.disabled, false)
+  assert.equal(trigger.children.length, 3)
+  assert.equal(trigger.children[0].props.className, 'rm-control-value')
+  assert.equal(trigger.children[1].props.className, 'rm-control-effort')
+  assert.deepEqual(trigger.children[0].children, ['reasoning-mode:standard'])
+  assert.deepEqual(trigger.children[1].children, ['reasoning-mode:auto'])
+  assert.equal(trigger.children[2].component, primitives.IconChevronDownOutlineRegular)
 
   menu.onSelect('summary:concise')
   await settle()
@@ -370,12 +436,48 @@ test('hands the official Menu two cells whose leaves are the only writes', async
     field: 'models',
     value: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'concise' }],
   }])
-  // A submenu parent and an unknown id select nothing.
-  menu.onSelect('cell:mode')
+  // A heading, a hairline and an unknown id select nothing.
+  menu.onSelect('label:mode')
+  menu.onSelect('separator:groups')
   menu.onSelect('summary:unknown')
   await settle()
   assert.equal(sets.length, 1)
   assert.equal(typeof menu.onClose, 'function')
+})
+
+test('swaps the chevron for the official pending dot while the write is in flight', async () => {
+  const runner = makeHookRunner()
+  const { require, primitives } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  let release
+  const inFlight = new Promise((resolve) => { release = resolve })
+  const { ctx, state } = makeCtx({
+    value: { models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] },
+    set: () => inFlight,
+  })
+  plugin.apply(ctx)
+  const props = {
+    sessionId: 'session-1',
+    useProjection: () => ({ next: { provider: 'provider-a', model: 'model-a' }, lastUsed: null }),
+  }
+
+  const idle = renderRegistered(runner, state.registered[1], props)
+  runner.flushEffects()
+  assert.equal(idle.props.anchor.children[2].component, primitives.IconChevronDownOutlineRegular)
+
+  idle.props.onSelect('mode:pro')
+  const busy = renderRegistered(runner, state.registered[1], props)
+  assert.equal(busy.props.open, false, 'selecting an option closes the card')
+  assert.equal(busy.props.anchor.props['aria-busy'], true)
+  assert.equal(busy.props.anchor.props.disabled, true)
+  assert.equal(busy.props.anchor.children[2].component, primitives.StateDot)
+
+  release(true)
+  await settle()
+  const settled = renderRegistered(runner, state.registered[1], props)
+  assert.equal(settled.props.anchor.props['aria-busy'], false)
+  assert.equal(settled.props.anchor.props.disabled, false)
+  assert.equal(settled.props.anchor.children[2].component, primitives.IconChevronDownOutlineRegular)
 })
 
 test('declares the page services and the conversation client dependencies', () => {

@@ -234,15 +234,21 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 
 没有 `sessionId` 时代表当前还没有可寻址的 session（通常是未选择工作区的空 composer）：控件直接返回 `null`，**不请求模型目录**。这条分支不能用"目录默认值"硬凑出一个路由，否则会把没有目标 session 的 UI 状态误显示成可配置路由。
 
-### 16. 输入栏菜单整套交给官方 `Menu` 原语
+### 16. 输入栏菜单整套交给官方 `Menu` 原语，且只用一张平面卡片
 
-`conversation.input.right` 槽里的控件不再自绘菜单。官方 primitives 导出了 `Menu`（+ `MenuItemButton`、`MenuSurface`），它原生支持本控件需要的全部行为：`anchor` 就地渲染触发器、`submenu` 是 hover/focus 打开的右侧嵌套卡片、`selectedId`/`selectedIds` 由原语画勾、`side`/`align`/`portal` 负责定位与传送、`onClose` 覆盖点击外部与 Escape、以及行间的方向键走位与选择后焦点回到触发器。所以下面这些**全部删掉了**，不要再写回来：
+`conversation.input.right` 槽里的控件不自绘菜单。官方 primitives 导出了 `Menu`（+ `MenuItemButton`、`MenuSurface`），它原生支持本控件需要的全部行为：`anchor` 就地渲染触发器、`items` 数据行、`{ type: 'label' }` 分组标题、`{ type: 'separator' }` 细分隔线、`selectedId`/`selectedIds` 的选中勾、`side`/`align`/`portal` 的定位与传送、`onClose` 覆盖点击外部与 Escape、以及行间的方向键走位与选择后焦点回到触发器。所以下面这些**全部删掉了**，不要再写回来：
 
-- `.rm-menu-cell*` / `.rm-menu-option*` / `.rm-menu-check` 那一整套样式（含 `height: 40px`、`min-height: 38px`、圆角 `20px`、`--dsw-elevation-prominent`、`z-index: 1100`）；
+- `.rm-menu-cell*` / `.rm-menu-option*` / `.rm-menu-check` / `.rm-cell*` / `.rm-option*` 那一整套样式（含 `height: 40px`、`min-height: 38px`、圆角 `20px`、`--dsw-elevation-prominent`、`z-index: 1100`）；
 - 手动 `document.addEventListener('mousedown'/'keydown')`、`pane` 状态与 Escape 回退逻辑；
 - `useLayoutEffect` 里的 `place()`（12px 边距、`getBoundingClientRect`、scroll/resize 监听）与 `ReactDOM.createPortal`——`portal: true` 就是同一套定位，官方那份连 `MARGIN = 12` 都与我们原先抄的一致。
 
-留给本插件的是**数据**：两个 submenu 父行（`cell:mode`、`cell:summary`，行内 `rm-cell-label` / `rm-cell-value` / chevron）与五个叶子（`mode:*` / `summary:*`），`onSelect` 收到叶子 id 后写一次 `models`（`CHOICES` 表把 id 映射成 patch；父行与未知 id 不写）。**唯一的例外是叶子的勾**：原语只给主行画 `IconCheckOutlineRegular`，嵌套行只渲染 `icon`/`label`/`shortcut`，所以叶子的选中标记留在自己的 label 里（`rm-option-check`）。CSS 只剩卡片尺寸（`rm-control-menu`，经 `listClassName` 落到 portal 出去的卡片上）。
+留给本插件的是**数据**：两条 `{ type: 'label' }` 标题（`label:mode` / `label:summary`）、五条选项行（`mode:*` / `summary:*`）、中间一条 `{ type: 'separator' }`。`onSelect` 收到选项 id 后写一次 `models`（`CHOICES` 表把 id 映射成 patch；标题、分隔线与未知 id 不写——原语也不会为标题和分隔线调 `onSelect`）。**勾也交回原语**：`selectedIds: [mode:<当前>, summary:<当前>]` 加上默认的 `selection: 'check'` 就是两个互相独立分组的选中标记，插件不再产出任何勾的 DOM。CSS 只剩卡片宽度（`rm-control-menu`，经 `listClassName` 落到 portal 出去的卡片上）。
+
+**0.2.0-rc.2 修正：当初选的 `submenu` 嵌套卡片在本控件上永远不可能被看见。** 原语的 `.submenu` 是 `Menu.module.css` 里的 `position: absolute; bottom: -4px; left: calc(100% + 10px)`——恒定向**右**展开。本控件是 composer 最右侧的控件，而 `Menu.tsx` 的 `place()` 把卡片钳在距视口右缘 12px 处（`MARGIN = 12`），所以第二级只能落在屏幕外；我们自己的 `.rm-control-menu` 还额外写了 `overflow: hidden`，等于再裁一刀。用户报的「菜单能打开、但选不了推理模式和摘要等级」就是这个：**不是状态 bug，是第二级从一开始就不可达**。原语对「一个菜单里有多个互相独立的选项组」给出的形状本来就是 `selectedIds`（`Menu.d.ts`：*rows shown as selected when a menu contains independent option groups*），平面卡片是这条路径的正解。**不要再给 `rm-control-menu` 加 `overflow` 或 `max-height`**：原语用 `scrollable` 类自己接管高度预算，我们一裁剪，将来任何嵌套内容都会被切掉。
+
+触发器仍是我们画的，但**测量值与颜色逐 token 抄官方模型位**（`dsh-client-ui-model-selection/lib/client.js` 的 css：`.trigger` = `font-weight:400` / `color:label-secondary` / `border-radius:var(--dsw-radius-sm)` / `max-width:min(360px,45cqw)` / `height:28px` / `padding:0 4px 0 8px`，focus ring 用 `var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))`；`.triggerEffort` = `label-caption` + `flex-shrink:1000`；`.chevron` = `label-caption` + 开启时 `rotate(180deg)`）。原先这里是 `font-weight:500` + 两段都用 `label-caption` + `border-radius:24px`，所以看上去比官方那颗更粗、两个值同色；官方那颗是「主值 `label-secondary`、副值 `label-caption`」的两段式。**行内不再用 `·` 分隔**（官方不画这个字符，只在 `title`/`aria-label` 里用 `·` 拼接），两个值靠 4px gap 与颜色深浅分开。写入在途时触发器用 `StateDot state="ongoing"` 顶掉箭头并置 `aria-busy`，与官方模型位一致。
+
+`--dsh-composer-model-text-display` / `--dsh-composer-model-icon-display` 这两个变量**故意不接**：官方 `dsh-client-ui-conversation/README.md` 写的是控制栏在「展开的控件无法排在同一行」时**为模型位**（for the model seat）设置它们，默认值 `block`/`none`；套到本控件上等于自己扩大契约范围，而且会让本控件在窄宽度下只剩一个箭头。
 
 ### 17. 文案只有一个落点，README 是第二落点
 
@@ -255,25 +261,25 @@ const effective = new Map(saved ∪ draft)   // 见 src/client.ts 的 Keep saved
 | 状态 | 判据 | 配置页 | 输入栏控件 |
 |---|---|---|---|
 | 未就绪 | `form.state.status !== 'ready'`（或 owner 没给 form） | 返回 `null`，不产出任何元素 | 不渲染 |
-| 只读 | `form.state.writable === false` | labels 交官方表单，由它显示「设置当前为只读。」并禁用保存 | **不做只读判断**：菜单照常可点，`scope.set` 被拒后由 `.catch(() => {})` 静默吞掉 |
+| 只读 | `form.state.writable === false` | labels 交官方表单，由它显示「设置当前为只读。」并禁用保存 | **不做只读判断**：菜单照常可点，写盘被拒只在控制台留一行警告，界面没有任何提示 |
 | 目录加载失败 | `catalogError !== null` | 显示「模型目录加载失败；已保存的选择不会被自动删除。」+ 具体错误 + **重试** | 已有 projection 路由照常显示；新 session 没有目录默认路由时不渲染 |
 | 目录为空 | `catalog.length === 0` 且 `effective.size === 0` | 显示「当前没有可用的模型目录。」 | 已有 projection 路由照常显示；新 session 没有目录默认路由时不渲染 |
 | 目录加载中 | `catalog === null` 且无错误 | 显示「正在加载模型目录…」 | 新 session 在目录默认路由返回前不渲染；已有 projection 路由不依赖目录，照常显示 |
 | 没有可寻址 session | `props.sessionId === undefined` | 不适用 | 不渲染，也不请求目录 |
 | 有未保存改动 | `dirty` | shell state 交官方表单（它自己画未保存状态），保存可点 | 不适用（控件即时写盘） |
-| 保存失败 | `mutate` 返回 `false` 或抛错 | shell state 的 `failed` 交官方表单，由它显示「保存失败，请重试。」 | 写盘被拒时静默 |
+| 保存失败 | `mutate` 返回 `false` 或抛错 | shell state 的 `failed` 交官方表单，由它显示「保存失败，请重试。」 | 写盘被拒时只写 console 警告（`the Host refused the composer write…`） |
 
 两处有意的不对称，改代码前先想清楚再动：
 
 - **只读时控件仍可点**：配置页会把只读交官方表单拦住保存，控件不会。界面在只读档下本来就少见，付出的是「点了没反应」的观感；要改就在 `update()` 前面加 `writable` 判断并给出与配置页一致的提示，而不是让菜单整个消失。
-- **控件写盘失败静默**：`.catch(() => {})` 只保证 `busy` 复位，没有错误提示。它的写入是「选中即生效」的乐观交互，失败时用户看到的是菜单选了但值没变（订阅会推回旧值）。
+- **控件写盘失败只有控制台记录**：`update()` 里是 `scope.set('models', next).then(…, …).finally(() => setBusy(false))`——写被拒时打一条 `console.warn`，并且**无论成败都复位 `busy`**。不要写成裸的 `.catch(() => {})`：那只兜得住 rejected promise，而这个 promise 一旦走成 pending 就永远不落，触发器会一直 `disabled`、看起来像"菜单坏了"。界面仍然没有提示：它的写入是"选中即生效"的乐观交互，失败时用户看到的是菜单选了但值没变（订阅会推回旧值）。要补提示就接官方 `Toast`，不要在这里自己画。
 
 ## 测试要点
 
 | 文件 | 覆盖 |
 |---|---|
 | `test/index.test.mjs` | `Config.toJSON()` 里 `models` 的 volatile 标记与字段形状、`normalizeModels` 的归一化、`applyReasoningBody` 保留其它字段、`isResponsesRequest`、`resolveRouteCandidate` 的歧义规则、`apply()` 装 fetch 包装并在卸载后还原、原生 `Request` 体重建与 `content-length` 移除、并发同 model 路由的亲和选择、stream 结束后的还原、模块契约（`name`/`inject`/`apply`）、**volatile 的活性（改 `config.models` 后下一请求即生效）** |
-| `test/client.test.mjs` | `plugins.row.config` 注册（key、`whileServed` 门禁）与 `inject` 面、**输入栏控件渲染出的就是官方 `Menu` 及其 items/submenu/leaf id**、不再自实现菜单的缺席断言（无 `rm-menu*`、`createPortal`、`ReactDOM`、`mousedown`、`getBoundingClientRect`）、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/自绘卡片样式）、**挂载一次配置页并断言注入面被转交、且不会自带 scope**、未 ready / 无 form 时返回 `null`、**摘要视图只出一行文本且不读目录**、**暂存后一次带修订号的写入**、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
+| `test/client.test.mjs` | `plugins.row.config` 注册（key、`whileServed` 门禁）与 `inject` 面、**输入栏控件渲染出的就是官方 `Menu`：一张平面卡片（两条 `label` + 五个选项行 + 一条 `separator`）、`selectedIds` 两项、触发器恰好三段子节点（值 / 摘要 / 箭头，无自绘分隔符）**、写入只认选项行 id（标题、分隔线、未知 id 都不写）、**在途写入时触发器换成官方 `StateDot` 并置 `aria-busy` 与 `disabled`、落定后换回箭头**、不再自实现菜单的缺席断言（无 `rm-menu*`、`rm-cell*`、`rm-option*`、`submenu`、`createPortal`、`ReactDOM`、`mousedown`、`getBoundingClientRect`）、触发器样式与官方逐 token 对齐（`font-weight:400`、`label-secondary`、`radius-sm`、`min(360px,45cqw)`、focus ring）且卡片不再自设 `overflow`、死规则与死 key（`rm-readonly`、`menuLabel`）已删、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/自绘卡片样式）、**挂载一次配置页并断言注入面被转交、且不会自带 scope**、未 ready / 无 form 时返回 `null`、**摘要视图只出一行文本且不读目录**、**暂存后一次带修订号的写入**、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
 
 两条纪律：
 
@@ -324,6 +330,7 @@ foreach ($f in 'README.md','README.en.md') {
 - **本环境的 PowerShell 是 5.1**：没有 `&&`、三元、`??`；`Get-Content` 对无 BOM 的 UTF-8 默认按 ANSI 解码（连行数都会少），读文件一律带 `-Encoding utf8`；`Set-Content -Encoding UTF8` 在本环境**会写入 BOM**，需要无 BOM 的 UTF-8 时用 `[System.IO.File]::WriteAllText`。
 - **成功命令也会吐像错误的 stderr**：`pnpm run typecheck` 把脚本行打到 stderr，PowerShell 会包装成 `NativeCommandError`；判据是退出码，不是这段输出。
 - **`git diff` 的 LF→CRLF 警告是正常的**，`git diff --check` 才是判空白的。
+- **profile 的 `package.json` 里塞一个解析不了的 spec 会连累所有插件的更新。** 本机 web profile 被手动加过 `"@zhourenke/dsh-reasoning-mode": "*"`（当时的目的是让插件管理器的清单显示本插件）。后果是 `pnpm update` 一律以退出码 1 失败：profile 的 `pnpm-lock.yaml` 的 importer 里**根本没有这一条**（只有 `@wxg-prc-cpg/browser-skill-dsh-plugin`、`dsh-lan-access`、`dsh-webui-mobile`），pnpm 于是必须先去 registry 解析 `*`，解析失败就在动其它依赖之前中断——所以症状是"更新**别的**插件也失败"。而依赖行并不是它可见的原因：`dsh-plugin-manager` 的 `listBundles()` 是把 `manifest.dsh.profile.bundles`、`manifest.dependencies` 与安装锚点的 `dependencies` **取并集**之后逐个解析包清单的（`lib/index.js` 的 `names = [...new Set([...selected, ...dependencies, ...Object.keys(installation.dependencies ?? {})])]`），所以本插件只要在 `dsh.profile.bundles` 里就会被列出。真要留成依赖就用不需要 registry 的 spec：`"link:C:/Users/ParkGarden/DSH_Workspace/CreatePlugin/dsh-reasoning-mode"`——profile 的 lockfile 设了 `excludeLinksFromLockfile: false`，`link:` 会被正常记录，本地目录直接生效。另外 `node_modules/@zhourenke/dsh-reasoning-mode` 是指向本仓库的 junction，这才是模块解析的落点。
 
 ## 与工作区其它插件的关系
 
@@ -371,7 +378,7 @@ peer dsh-llm = ^0.2.0-rc.2 -> 兼容
 
 - **座位与槽**：`conversation.input.right` 仍是 `kind: 'list'` / `scope: 'session'` / `registerOptions: [id(required), order, label]`、`occupants: []`、`replaceRisk: 'none'`，仍由 `dsh-client-ui-conversation` 的 `renderSlot("conversation.input.right", {})` 渲染；`plugins.row.config` 仍是 `kind: 'keyed'`、只收 `key`、`occupants: []`、`keyDomain` 仍是 "open: … none are taken yet"；`rowConfigKey` / `formFor` 的判据（`ns === 行 id`）逐字未变。
 - **表单契约**：`formFor(id)` 返回的仍是 `{ state: form.getSnapshot(), mutate(ops, revision) }`。座位文档里的类型名换成了 **`ConfigPageForm`**（0.1.7 的文档写的是 `ConfigForm`），但**形状一字未变**——`ConfigForm` 类本身仍有 `getSnapshot()/subscribe()/set()/unset()/mutate(ops, expectedRevision?)`，快照字段仍是 `status/value/base/user/revision/writable/mode`；`configForms.whileServed(namespaces, register)` 语义不变。
-- **原语**：`Menu` 的 props 与 `MARGIN = 12`、`SettingsForm` 的 `{state:{available,dirty,invalid,saving,writable,failed}, labels, children, onSave, onDiscard}`、三个图标（`IconCheckOutlineRegular` / `IconChevronDownOutlineRegular` / `IconChevronRightOutlineRegular`）全部原样；数字后缀图标名依旧不存在。**嵌套行仍然只渲染 icon/label/shortcut、不画选中勾**——`.rm-option-check` 必须留在 label 里这件事没变。
+- **原语**：`Menu` 的 props（含 `items` 里 `{type:'label'}` / `{type:'separator'}` 的判别式、`selectedId`/`selectedIds`、`selection: 'check'`）、`MARGIN = 12`、`SettingsForm` 的 `{state:{available,dirty,invalid,saving,writable,failed}, labels, children, onSave, onDiscard}`、`IconChevronDownOutlineRegular` / `IconCheckOutlineRegular` / `IconChevronRightOutlineRegular` / `StateDot` 全部原样；数字后缀图标名依旧不存在。
 - **服务**：`configForms` / `slots` / `locale` / `remote` / `remote.session` 都还在；`modelCatalog` RPC 仍在 `@deepseek-ai/dsh-api-remotes`（`method: "modelCatalog"`）；`modelSelection` 投影仍是 `{lastUsed, next}`（每个元素多了可选的 `reasoningEffort`，我们忽略）；`locale.register(ns, dicts)` 与 `locale.bind(ns)` 签名不变。
 - **宿主半边**：`llm/stream` 仍是 waterfall（`dsh-llm/lib/index.js` 里 `this.ctx.waterfall(this, "llm/stream", options, …)`），事件表里也是唯一与请求相关的那个；`Volatile` 仍从 cordis 导出、`Config` 仍是 `export const Config`；`schemastery` 仍是 `~3.18.4` 单副本（宿主全部包声明唯一范围，本包 `pnpm why` 只有一份）；`cordis` 仍是 `4.0.4`。
 - **排序依赖的官方哈希类名**：本插件 CSS 里那两条 `:has()` 规则挂的 `uV2eYG_trailing` / `uV2eYG_primary` 在 0.2.0 的 `dsh-client-ui-conversation` 里**哈希未变**（CSS-module 哈希按内容生成，源码没动就不动）。这类依赖失效的症状是**控件顺序错乱而不是报错**，所以每次升级都要按名字重取一次。
@@ -384,6 +391,7 @@ peer dsh-llm = ^0.2.0-rc.2 -> 兼容
 - **reasoning effort 变成一等能力**：适配器在模型信息里自报 `reasoning: { efforts: [{id,name,description}], defaultEffort }`，`resolveCallWithInfo` 会**在发起 I/O 之前拒绝**模型不支持的显式 effort；pi-ai 侧还有 profile 的 `reasoningEfforts` 字典 → `thinkingLevelMap` 映射。**本插件不实现 effort（那会是重复造轮子），菜单里只有官方没有入口的 `mode` 与 `summary` 两项。**
 - **本轮真正剥离掉的一处重复：自备译函数。** 上一版两个座位都在 `apply` 里 `locale.bind(NS)`、再把 `t` 展开进组件 props；渲染器源码显示声明了 `locale:` 的 entry 本来就会拿到 `kit.t = localeSeat(face, ns)`（即 `face.bind(ns)` 的缓存包装），locale face 缺失时它还要**抛 `SlotAssemblyError`**——所以这是同一个 prop 上的第二条路径。现在源码里不出现 `locale.bind`，组件读座位给的 `props.t`，测试桩按渲染器规则拼 kit 并用断言把这条钉住（见 §12 的座位依据）。
 - **插件的界面入口换了地方（用户可见，README 必须跟着改）。** 0.1.7 里配置页在设置页的"插件"入口下，0.2.0 把它改成**左侧工作区顶部的「插件」选项卡**：`dsh-client-ui-plugin-manager` 现在把面板注册进 `sidebar.panellist`（`{ id: PANEL_ID, order: 0, label: () => t("panel"), locale: NS }`），页面主体进 `main`。**座位与派发机制一点没变**——行详情页仍是官方 `RowDetail` 渲染 `renderSlot("plugins.row.config", { view: "page", form })`，行的"配置"按钮仍以 `ledger.rows.has(rowConfigKey(pkg.name, row.rowId))` 为显示条件（我们的注册在 `whileServed` 生效后才存在，所以**注册没起来时用户看到的是一个没有入口的行**）。插件代码因此不用改，要改的是 README 里"去哪儿点"那句：**插件选项卡 → `@zhourenke/dsh-reasoning-mode` 包页面 → 「包含的组件」列表 → `reasoning-mode` 行的「配置」**（官方文案 `configureRow: "配置 {name}"`，列表标题 `partsLabel: "包含的组件"`，返回键 `backToPackage`）。
+- **输入栏菜单的第二级从"永远看不见"改成一张平面卡片（用户可见）。** 上一版把两个分组放进了原语的 `submenu` 嵌套卡片，而那条路径恒向右展开、本控件又在 composer 最右侧，所以第二级从未被渲染到屏幕内（我们自己写的 `overflow: hidden` 又叠了一刀）——这正是用户报的"无法选择推理模式和摘要等级"的成因。现在两个分组是同一张卡片里的 `label` + 选项行，勾由 `selectedIds` 交原语画（详见 §16）。同一轮还对齐了触发器的字重/颜色/圆角（官方 `font-weight:400` + `label-secondary`/`label-caption` 两段式，原先是 500 且两段同色），并在写入在途时换成官方 `StateDot`。
 
 **判过但不采用的官方件（"不重复造轮子"的另一面：也不为了显得在融合而硬接）**
 

@@ -34,7 +34,7 @@ dsh plugin --profile web remove @zhourenke/dsh-reasoning-mode
 
 1. Open the **Plugins** tab at the top of the left workspace sidebar, enter `@zhourenke/dsh-reasoning-mode`, click **Configure** on the `reasoning-mode` row under **Components**, check the `provider/model` routes this plugin should rewrite, and click **Save**.
 2. Open a conversation and switch the model to one of the checked routes in the model selector.
-3. Pick the **reasoning mode** and the **summary level** you want in the label that appears on the right.
+3. Open the label on the right of the composer: **reasoning mode** (Standard / Pro) fills the upper half of the card and **summary level** (Auto / Concise / Detailed) the lower half. The current values carry the check, and a click applies at once (there is no save button).
 
 A newly checked route starts at `Standard` + `Auto`; unchecking and checking it again keeps the values you had set.
 
