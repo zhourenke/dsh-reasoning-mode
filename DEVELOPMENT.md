@@ -362,7 +362,7 @@ peer dsh-llm = ^0.1.7-rc.2 -> 冲突: {"name":"@zhourenke/dsh-reasoning-mode","v
 peer dsh-llm = ^0.2.0-rc.2 -> 兼容
 ```
 
-（两行都是把本包 `package.json` 直接喂给 `@deepseek-ai/dsh-app-boot` 的 `evaluatePluginCompatibility()` 得到的，用的是装载时真正调用的那个函数。）所以：
+（两行都是把本包 `package.json` 直接喂给 `@deepseek-ai/dsh-app-boot` 的 `evaluatePluginCompatibility()` 得到的，用的是装载时真正调用的那个函数。日志里那个 `"version":"0.1.0"` 是那次实验当时的号，**保留原样不改**——本包自己的 `version` 不参与判定，闸门只按 `@deepseek-ai/dsh-*` 的 peer 范围判；当前发布号见 `package.json`。）所以：
 
 - **跨 minor 升级后第一件要改的就是这条范围**：本轮的"启动报不兼容"只有这一个成因，改完即通过；插件代码与宿主 API 一处没坏（见「DSH 0.2.0-rc.2 复核记录」）。
 - **`incompatible-version` 只说明范围没跟上宿主，不能当成"插件不兼容"的判据**——反过来闸门放行也不等于 API 兼容。真正的断裂（0.1.5 → 0.1.7 那一轮）全是 **API 消失**：`ctx.settings.register`、`ctx.settingsScope`、`settings.plugin.item`、`settings.yaml`、数字后缀图标名。这些不产生任何闸门输出，只能靠逐条核对契约发现。
