@@ -547,7 +547,6 @@ window.__ModuleLoader__.load({
       const locale = ctx.locale
       if (!slots || !configForms || !locale) return
       const scope = configForms.get(NS)
-      const t = locale.bind(NS)
       const sessionFace = (): SessionFace | undefined => {
         const viaNamespace = typeof ctx.get === 'function' ? ctx.get('remote.session') : undefined
         if (viaNamespace !== undefined) return viaNamespace as SessionFace
@@ -555,6 +554,12 @@ window.__ModuleLoader__.load({
         return remote === undefined || remote === null ? undefined : remote.session as SessionFace
       }
       ctx.effect(() => locale.register(NS, { zh, en }), 'reasoning-mode: locale dictionaries')
+      // Both registrations declare `locale: NS`, which is what puts the
+      // translator on their props: the renderer reads the entry's `locale` and
+      // composes `kit.t = localeSeat(face, ns)` for it (and throws when no
+      // locale face is installed, so there is no "the seat might not supply it"
+      // case), with `localeSeat` being `face.bind(ns)` memoized per revision.
+      // Binding our own translator here would shadow that identical prop.
       // Our row's configuration page. The plugins page dispatches
       // `plugins.row.config` by `<package name>#<row id>` and supplies the form,
       // so the page exists only while the Host serves this entry's namespace.
@@ -562,13 +567,13 @@ window.__ModuleLoader__.load({
         name: 'plugins.row.config',
         key: `${PACKAGE_NAME}#${NS}`,
         locale: NS,
-      }, (props: any) => e(ReasoningModeCard, { ...props, sessionFace, t })))), 'reasoning-mode: configuration page')
+      }, (props: any) => e(ReasoningModeCard, { ...props, sessionFace })))), 'reasoning-mode: configuration page')
       slots.inject('conversation.input.right', () => slots.register({
         name: 'conversation.input.right',
         id: NS,
         order: 85,
         locale: NS,
-      }, (props: any) => e(ModeControl, { ...props, scope, sessionFace, t })))
+      }, (props: any) => e(ModeControl, { ...props, scope, sessionFace })))
     }
 
     return { apply, inject: ['slots', 'configForms', 'locale', 'remote', 'remote.session'] }

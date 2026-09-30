@@ -212,7 +212,9 @@ export const Config = z.object({
 - **0.2.0 新增 `plugins.bundle.config`**（`kind: 'keyed'`，按**包名**为键、渲染在 bundle 页面的描述与行列表之间、只有 `view: 'page'`）：它服务的是 bundle **自己**的配置。本插件的配置是**行条目的配置**（包内 patch 那行的 `config`，loader 直接交给 `apply(ctx, config)`），所以继续用 `plugins.row.config`——不要因为它存在就搬过去。
 - 键的格式由官方构造函数 `rowConfigKey(bundle, rowId)` = `` `${bundle}#${rowId}` `` 决定（`bundle` 是包名，`rowId` 是包内 patch 声明的行 id），页面侧用它建 key、`configForm(rowId)` 取表单。
 - **`form` 只在 `configForms.describe().namespaces` 里存在 `ns === 行 id` 时才有值**（`formFor(rowId)` 的第一行就是这个判断），所以「行 id = 条目 id = `configForms` namespace」三者必须一致——本插件三者都是 `reasoning-mode`。
-- 注册选项里的 `locale` 决定 props 上有没有 `t`。0.2.0 的 `locale` 服务文档把两者的关系写明了：`bind(ns)` 返回的译函数与「framework-injected `t` seat」**同一 key domain**，且同一命名空间重复 `bind` 返回**同一个引用**。两种取用等价，本插件仍显式 `locale.bind(NS)` 再 `{ …props, t }`——这样组件不依赖「座位到底有没有把 `t` 注进去」这个细节，代价只是重复一次等价取用。`slots.inject(slot, () => slots.register({…}, render))` 这个嵌套写法就是官方数据集里给出的范例，其返回值即 `whileServed` 需要的 disposer。
+- 注册选项里的 `locale` **就是**props 上 `t` 的来源：渲染器对每个 entry 读出它的 `locale`，再拼 kit（`dsh-client-ui-renderer/lib/client.js`：`if (entry.locale !== void 0) { … kit["t"] = localeSeat(face, entry.locale) }`），而 `localeSeat(face, ns)` 就是 `face.bind(ns)` 按 locale revision 缓存的包装（`locale` 服务的文档也写明两者"同一 key domain"）。**locale face 缺失时渲染器直接抛 `SlotAssemblyError`**，所以不存在"座位可能没给 `t`"这种情况——本插件因此**不再自己 `locale.bind(NS)`**（那会遮盖同一个 prop 的同名值），两个座位各自声明 `locale: NS`、组件直接读 `props.t`。`test/client.test.mjs` 的桩按渲染器的规则拼 kit（声明了 `locale` 才给 `t`），并有一条断言钉住"源码里不许出现 `locale.bind`"。
+- 给座位加**别的** props 还有一条路：注册选项 `inject`（`register({ name, inject: () => ({ … }) }, Component)`，渲染器 `runInject` 会把返回值并进 kit，官方 `dsh-client-ui-directory-picker-browse` 就这么传 `listDirectory` 与 `t`）。**本插件不用它**：座位数据集里 `inject` 没有被声明成注册选项（我们两个座位的 `registerOptions` 只有 `id`/`order`/`label` 与 `key`），它的入参还随座位种类变化（keyed 传键、chain 传 actions），而这些 props 是本插件自己的闭包、不是官方已提供的能力——用 `{ …props, sessionFace }` 展开是同一件事的更简形式。
+- `slots.inject(slot, () => slots.register({…}, render))` 这个嵌套写法就是官方数据集里给出的范例，其返回值即 `whileServed` 需要的 disposer。
 
 ### 13. 「不可用」分组必须基于 effective 而不是 draft
 
@@ -380,6 +382,7 @@ peer dsh-llm = ^0.2.0-rc.2 -> 兼容
 - **`plugins.bundle.config`**（新座位，见 §12 的座位依据）：服务 bundle 自己的配置，本插件不用。
 - **`plugins.item` 的文档现在写死了归属**：bundle 的配置应落在 `plugins.bundle.config` 或 `plugins.row.config`，等于把我们上一轮的座位选择变成了官方明文。
 - **reasoning effort 变成一等能力**：适配器在模型信息里自报 `reasoning: { efforts: [{id,name,description}], defaultEffort }`，`resolveCallWithInfo` 会**在发起 I/O 之前拒绝**模型不支持的显式 effort；pi-ai 侧还有 profile 的 `reasoningEfforts` 字典 → `thinkingLevelMap` 映射。**本插件不实现 effort（那会是重复造轮子），菜单里只有官方没有入口的 `mode` 与 `summary` 两项。**
+- **本轮真正剥离掉的一处重复：自备译函数。** 上一版两个座位都在 `apply` 里 `locale.bind(NS)`、再把 `t` 展开进组件 props；渲染器源码显示声明了 `locale:` 的 entry 本来就会拿到 `kit.t = localeSeat(face, ns)`（即 `face.bind(ns)` 的缓存包装），locale face 缺失时它还要**抛 `SlotAssemblyError`**——所以这是同一个 prop 上的第二条路径。现在源码里不出现 `locale.bind`，组件读座位给的 `props.t`，测试桩按渲染器规则拼 kit 并用断言把这条钉住（见 §12 的座位依据）。
 
 **判过但不采用的官方件（"不重复造轮子"的另一面：也不为了显得在融合而硬接）**
 

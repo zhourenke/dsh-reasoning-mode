@@ -148,6 +148,19 @@ function makeCtx(options = {}) {
     subscribe: () => () => {},
     set: async (field, value) => { sets.push({ field, value }); return true },
   }, form)
+  // The renderer composes every entry's kit, and the translator is part of it:
+  // an entry that declares `locale:` gets `kit.t = localeSeat(face, ns)` — the
+  // same key domain as `face.bind(ns)`, memoized per locale revision — and the
+  // renderer *throws* when no locale face is installed (contract fact 5 in
+  // `dsh-client-ui-renderer/lib/client.js`). So the harness supplies it here and
+  // the plugin must never bind its own translator.
+  const localeFace = {
+    bind: (namespace) => (key) => `${namespace}:${key}`,
+    register(namespace, dictionaries) {
+      state.locales.push({ namespace, dictionaries })
+      return () => {}
+    },
+  }
   const ctx = {
     slots: {
       inject(name, callback) {
@@ -155,7 +168,10 @@ function makeCtx(options = {}) {
         callback()
       },
       register(slotDefinition, render) {
-        state.registered.push({ slotDefinition, render })
+        const kit = slotDefinition.locale === undefined
+          ? render
+          : (props) => render({ ...props, t: localeFace.bind(slotDefinition.locale) })
+        state.registered.push({ slotDefinition, render: kit })
         return () => {}
       },
     },
@@ -169,13 +185,7 @@ function makeCtx(options = {}) {
         return callback()
       },
     },
-    locale: {
-      bind: (namespace) => (key) => `${namespace}:${key}`,
-      register(namespace, dictionaries) {
-        state.locales.push({ namespace, dictionaries })
-        return () => {}
-      },
-    },
+    locale: localeFace,
     effect(callback) {
       state.effects += 1
       callback()
@@ -292,6 +302,12 @@ test('builds the composer menu from the official primitive and re-implements not
   assert.doesNotMatch(source, new RegExp(legacySummaryLabel))
   assert.match(source, /conversation\.input\.right/)
   assert.match(source, /摘要等级/)
+  // Both registrations declare `locale: NS`, which is what puts the translator
+  // on their props (the renderer composes `kit.t` from the entry's `locale` and
+  // throws when no locale face is installed). Binding our own translator would
+  // shadow that identical prop, so the source must contain none.
+  assert.equal((source.match(/locale: NS,/g) ?? []).length, 2)
+  assert.doesNotMatch(source, /locale\.bind/)
   // The nested cards, the placement, the portal, outside click, Escape, the
   // arrow walk and the focus return are the official Menu's (contract fact 7).
   assert.match(source, /^\s+Menu,$/m)
@@ -396,9 +412,12 @@ test('the slot mount forwards the injected face to the page', () => {
   plugin.apply(ctx)
 
   // The owner passes only the view and the Host form (contract fact 1), so the
-  // render closure is what has to hand the page its translator and catalog face.
+  // render closure is what has to hand the page its catalog face; the translator
+  // arrives from the seat instead, and only because the registration declares
+  // `locale` (the harness composes the kit the way the renderer does).
   const element = state.registered[0].render({ view: 'page', form })
   assert.equal(typeof element.component, 'function')
+  assert.equal(state.registered[0].slotDefinition.locale, 'reasoning-mode')
 
   const page = element.component(element.props)
   assert.ok(page, 'a ready Host form must render the page')
