@@ -1,0 +1,23 @@
+# Freshly published prerelease host packages this plugin builds and tests
+# against. pnpm's minimum-release-age gate (where a machine configures one)
+# refuses them until they age out, so each exact version is listed here.
+#
+# The list is exactly what pnpm had to exempt for this package's resolution
+# closure — it writes these entries itself during `pnpm install`, so after a DSH
+# upgrade, re-run the install and take the generated list rather than editing
+# versions by hand. Stable dependencies old enough to clear the gate (cordis
+# 4.0.4, cosmokit 1.8.5, schemastery 3.18.4) never appear here.
+#
+# Only the current host version is listed: this plugin follows one DSH release
+# at a time, and `pnpm install` would otherwise merge the old version in with a
+# `||` selector, leaving entries for a release nothing here resolves to.
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-brand@0.2.0-rc.2'
+  - '@deepseek-ai/dsh-client-ui-plugin-manager@0.2.0-rc.2'
+  - '@deepseek-ai/dsh-client-ui-primitives@0.2.0-rc.2'
+  - '@deepseek-ai/dsh-client-ui-settings@0.2.0-rc.2'
+  - '@deepseek-ai/dsh-llm@0.2.0-rc.2'
+  - '@deepseek-ai/dsh-timeout@0.2.0-rc.2'
+  - '@deepseek-ai/dsh-typert-protocol@0.2.0-rc.2'
+  - '@deepseek-ai/dsh-util-crypto@0.2.0-rc.2'
+  - '@deepseek-ai/dsh-util-values@0.2.0-rc.2'

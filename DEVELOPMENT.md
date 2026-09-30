@@ -205,13 +205,14 @@ export const Config = z.object({
 
 `draft / saved` 两个集合仍然保留：`draftModels` 是页面正在编辑的暂存集合（初始为 `form.state.value` 的副本），`savedModels` 每次渲染从 `form.state.value` 重算；只有**不脏**（`!dirty`）时外部更新才覆盖 draft，否则用户正在编辑的内容会被冲掉。
 
-**座位选择的实测依据**（0.1.7 把整张客户端座位表以数据形式内置在 `dsh-cordis-client-runner/lib/client.js` 里，可直接读）：
+**座位选择的实测依据**（0.1.7 首测、0.2.0-rc.2 复核：整张客户端座位表以数据形式内置在 `dsh-cordis-client-runner/lib/client.js` 里，可直接读）：
 
-- `plugins.row.config` 这条记录：`kind: 'keyed'`、`registerOptions` 只有 `key`（required）、**`occupants: []`、`keyDomain: "open: … none are taken yet"`**——这个座位目前没人占。
-- `plugins.item` 的 `occupants` 已被官方伴随包占满、`keyDomain` 为空串，文档也写明它 "OCCUPIED by the official settings pages, one companion package per host-plane namespace"。**它仍然可用**（`formFor(item.id)` 与行页面是同一套机制），代价是把本插件的卡片塞进官方分组、与官方伴随包并列——行用途的配置按文档应落在 `plugins.row.config`。
+- `plugins.row.config` 这条记录：`kind: 'keyed'`、`registerOptions` 只有 `key`（required）、**`occupants: []`、`keyDomain: "open: … none are taken yet"`**——这个座位目前没人占（0.2.0 复核逐字未变）。
+- `plugins.item` 的 `occupants` 已被官方伴随包占满、`keyDomain` 为空串，文档也写明它 "OCCUPIED by the official settings pages, one companion package per host-plane namespace"。**它仍然可用**（`formFor(item.id)` 与行页面是同一套机制），代价是把本插件的卡片塞进官方分组、与官方伴随包并列。0.2.0 的文档把这条结论写死了：*"a bundle's configuration belongs in `plugins.bundle.config` or `plugins.row.config` instead."*
+- **0.2.0 新增 `plugins.bundle.config`**（`kind: 'keyed'`，按**包名**为键、渲染在 bundle 页面的描述与行列表之间、只有 `view: 'page'`）：它服务的是 bundle **自己**的配置。本插件的配置是**行条目的配置**（包内 patch 那行的 `config`，loader 直接交给 `apply(ctx, config)`），所以继续用 `plugins.row.config`——不要因为它存在就搬过去。
 - 键的格式由官方构造函数 `rowConfigKey(bundle, rowId)` = `` `${bundle}#${rowId}` `` 决定（`bundle` 是包名，`rowId` 是包内 patch 声明的行 id），页面侧用它建 key、`configForm(rowId)` 取表单。
 - **`form` 只在 `configForms.describe().namespaces` 里存在 `ns === 行 id` 时才有值**（`formFor(rowId)` 的第一行就是这个判断），所以「行 id = 条目 id = `configForms` namespace」三者必须一致——本插件三者都是 `reasoning-mode`。
-- 注册选项里的 `locale` 决定 props 上有没有 `t`（"present exactly on entries whose registration declares `locale:`"）；`slots.inject(slot, () => slots.register({…}, render))` 这个嵌套写法就是官方数据集里给出的范例，其返回值即 `whileServed` 需要的 disposer。
+- 注册选项里的 `locale` 决定 props 上有没有 `t`。0.2.0 的 `locale` 服务文档把两者的关系写明了：`bind(ns)` 返回的译函数与「framework-injected `t` seat」**同一 key domain**，且同一命名空间重复 `bind` 返回**同一个引用**。两种取用等价，本插件仍显式 `locale.bind(NS)` 再 `{ …props, t }`——这样组件不依赖「座位到底有没有把 `t` 注进去」这个细节，代价只是重复一次等价取用。`slots.inject(slot, () => slots.register({…}, render))` 这个嵌套写法就是官方数据集里给出的范例，其返回值即 `whileServed` 需要的 disposer。
 
 ### 13. 「不可用」分组必须基于 effective 而不是 draft
 
@@ -335,21 +336,68 @@ foreach ($f in 'README.md','README.en.md') {
 | `@deepseek-ai/schemastery` | 唯一被真正 import 的值依赖（`z`，含 `.volatile()`） | `dependencies`（`~3.18.4`） |
 | `@deepseek-ai/cordis` | 上下文与插件框架（`Context` / `Volatile` 类型） | `peerDependencies`（optional） |
 | `@deepseek-ai/dsh-llm` | `llm/stream` 事件名增强 | `peerDependencies`（optional） |
-| `@deepseek-ai/dsh-client-ui-primitives` | 浏览器半边 `require()` 的唯一官方包（图标 + `SettingsForm`） | `devDependencies` |
+| `@deepseek-ai/dsh-client-ui-primitives` | 浏览器半边 `require()` 的唯一官方包（图标 + `Menu` + `SettingsForm`） | `devDependencies` |
 | `@deepseek-ai/dsh-client-ui-plugin-manager`、`…-ui-settings` | 配置页槽契约与 `ConfigPageForm` 的**类型出处**（浏览器半边是 `any`，靠人工对照 `.d.ts`） | `devDependencies` |
 | `typescript`、`@types/node` | 工具链 | `devDependencies` |
 
-宿主包在 `devDependencies` 里**钉死到 `0.1.7-rc.2`**（`cordis` 钉 `4.0.4`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围会让人对着与线上不同的宿主做类型检查与测试。`schemastery` 用 `~3.18.4`（官方插件的写法）：**它对运行时有实质影响**——`3.18.2` 没有 `.volatile()`，插件会在 `apply` 时抛 `TypeError`，而宿主与 loader 用的是 `3.18.4`。基线版本：**DSH v0.1.7-rc.2**，Node 25.8.1，pnpm 11.21.0。
+宿主包在 `devDependencies` 里**钉死到 `0.2.0-rc.2`**（`cordis` 钉 `4.0.4`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围会让人对着与线上不同的宿主做类型检查与测试。`dsh-llm` 这条尤其不能省——宿主半边有一句 `import type {} from '@deepseek-ai/dsh-llm'`，它取的是该包声明的事件表（`llm/stream`），版本旧了就会对着退役的事件签名做类型检查。`schemastery` 用 `~3.18.4`（官方插件的写法）：**它对运行时有实质影响**——`3.18.2` 没有 `.volatile()`，插件会在 `apply` 时抛 `TypeError`，而宿主与 loader 用的是 `3.18.4`。基线版本：**DSH v0.2.0-rc.2**，Node 25.8.1，pnpm 11.21.0。
 
 ## 兼容性与准入闸门
 
-`peerDependencies` 写的是**意图声明**，不是兼容性证明：宿主 0.1.7 起的装载闸门只统计名字为 `@deepseek-ai/dsh-*` 的 peer，按 `semver.satisfies(runtime, range, { includePrerelease: true })` 判定。`includePrerelease` 让这条闸门比普通 semver 宽松得多——**本插件 0.1.5 时代的 `^0.1.5-rc.1` 在 `0.1.7-rc.2` 下照样通过**（实测：直接调用 `@deepseek-ai/dsh-app-boot` 导出的 `evaluatePluginCompatibility()` 得到 `undefined`，即 compatible）。所以：
+`peerDependencies` 写的是**意图声明**，不是兼容性证明：宿主的装载闸门只统计名字为 `@deepseek-ai/dsh-*` 的 peer，按 `semver.satisfies(runtime, range, { includePrerelease: true })` 判定（`@deepseek-ai/cordis` 走自己的版本线，不在闸门内）。`includePrerelease` 让这条闸门比普通 semver 宽松得多——0.1.5 时代的 `^0.1.5-rc.1` 在 `0.1.7-rc.2` 下照样通过。**但宽松只覆盖 patch：它照样拦跨 minor。** 0.1.7 → 0.2.0 正好跨了 minor，于是 `^0.1.7-rc.2` 当场被拦：
 
-- **`incompatible-version` 警告只可能是跨 minor 漂移**，本插件这一轮根本没有被闸门拦过；把它当成"插件不兼容"的判据会误诊。
-- 真正的 0.1.5 → 0.1.7 断裂全是 **API 消失**：`ctx.settings.register`、`ctx.settingsScope`、`settings.plugin.item`、`settings.yaml`、数字后缀图标名。这些不产生任何闸门输出。
-- 排查别人报"启动说不兼容"时，**先看警告里的包名**。本机 web profile 的历史日志里被点名的是 `@michengai/dsh-archive-manager@0.1.44`（peer 是一个不含 `0.1.7-rc.2` 的精确版本并集），本插件从未出现在其中。
-- `^0.1.7-rc.2` 会放行 `0.1.7` 正式版与 `0.1.8-rc.*`，只拦跨 minor（`0.2.x`）。要更严就写精确版本，代价是每次宿主升级都会被拦下。
-- **检查方法**：`evaluatePluginCompatibility(manifest)` 就是装载时真正调用的函数，直接拿本包的 `package.json` 调它，比人眼比范围可靠（含 `includePrerelease` 的宽松度，也含 `workspace:*` 这类特例）。
+```
+runtime = 0.2.0-rc.2
+peer dsh-llm = ^0.1.7-rc.2 -> 冲突: {"name":"@zhourenke/dsh-reasoning-mode","version":"0.1.0",
+  "runtimeVersion":"0.2.0-rc.2","peers":{"@deepseek-ai/dsh-llm":"^0.1.7-rc.2"},"exempted":false}
+peer dsh-llm = ^0.2.0-rc.2 -> 兼容
+```
+
+（两行都是把本包 `package.json` 直接喂给 `@deepseek-ai/dsh-app-boot` 的 `evaluatePluginCompatibility()` 得到的，用的是装载时真正调用的那个函数。）所以：
+
+- **跨 minor 升级后第一件要改的就是这条范围**：本轮的"启动报不兼容"只有这一个成因，改完即通过；插件代码与宿主 API 一处没坏（见「DSH 0.2.0-rc.2 复核记录」）。
+- **`incompatible-version` 只说明范围没跟上宿主，不能当成"插件不兼容"的判据**——反过来闸门放行也不等于 API 兼容。真正的断裂（0.1.5 → 0.1.7 那一轮）全是 **API 消失**：`ctx.settings.register`、`ctx.settingsScope`、`settings.plugin.item`、`settings.yaml`、数字后缀图标名。这些不产生任何闸门输出，只能靠逐条核对契约发现。
+- 排查别人报"启动说不兼容"时，**先看警告里的包名**。本机 web profile 的历史日志里被点名过一次的是 `@michengai/dsh-archive-manager@0.1.44`（peer 是一个不含 `0.1.7-rc.2` 的精确版本并集）。profile 的豁免表（`readProfileCompatibility(dir)`）也要一起看：有豁免就会静默放行，`exempted: false` 才是真的按范围判定。
+- 写 `^<当前宿主版本>` 会放行同 minor 的正式版与后续预发布（`^0.2.0-rc.2` → 放行 `0.2.0`、`0.2.1-rc.1`，拦 `0.1.7-rc.2` 与 `0.3.0-rc.1`）。要更严就写精确版本，代价是每次宿主升级都会被拦下。
+- **检查方法**：`evaluatePluginCompatibility(manifest, exemptions?, runtimeVersion?)` 就是装载时真正调用的函数，直接拿本包的 `package.json` 调它，比人眼比范围可靠（含 `includePrerelease` 的宽松度，也含豁免表）。
+
+## DSH 0.2.0-rc.2 复核记录（设置 / UI 域）
+
+按工作区 `PLUGIN_RELEASE_GUIDE.md` 第 7 节那份 14 步清单逐条跑过（0.1.7-rc.2 → 0.2.0-rc.2）。**结论：只有 peer 范围一处要改，代码与契约一处没坏。** 逐条证据：
+
+**未变（重跑即可确认）**
+
+- **座位与槽**：`conversation.input.right` 仍是 `kind: 'list'` / `scope: 'session'` / `registerOptions: [id(required), order, label]`、`occupants: []`、`replaceRisk: 'none'`，仍由 `dsh-client-ui-conversation` 的 `renderSlot("conversation.input.right", {})` 渲染；`plugins.row.config` 仍是 `kind: 'keyed'`、只收 `key`、`occupants: []`、`keyDomain` 仍是 "open: … none are taken yet"；`rowConfigKey` / `formFor` 的判据（`ns === 行 id`）逐字未变。
+- **表单契约**：`formFor(id)` 返回的仍是 `{ state: form.getSnapshot(), mutate(ops, revision) }`。座位文档里的类型名换成了 **`ConfigPageForm`**（0.1.7 的文档写的是 `ConfigForm`），但**形状一字未变**——`ConfigForm` 类本身仍有 `getSnapshot()/subscribe()/set()/unset()/mutate(ops, expectedRevision?)`，快照字段仍是 `status/value/base/user/revision/writable/mode`；`configForms.whileServed(namespaces, register)` 语义不变。
+- **原语**：`Menu` 的 props 与 `MARGIN = 12`、`SettingsForm` 的 `{state:{available,dirty,invalid,saving,writable,failed}, labels, children, onSave, onDiscard}`、三个图标（`IconCheckOutlineRegular` / `IconChevronDownOutlineRegular` / `IconChevronRightOutlineRegular`）全部原样；数字后缀图标名依旧不存在。**嵌套行仍然只渲染 icon/label/shortcut、不画选中勾**——`.rm-option-check` 必须留在 label 里这件事没变。
+- **服务**：`configForms` / `slots` / `locale` / `remote` / `remote.session` 都还在；`modelCatalog` RPC 仍在 `@deepseek-ai/dsh-api-remotes`（`method: "modelCatalog"`）；`modelSelection` 投影仍是 `{lastUsed, next}`（每个元素多了可选的 `reasoningEffort`，我们忽略）；`locale.register(ns, dicts)` 与 `locale.bind(ns)` 签名不变。
+- **宿主半边**：`llm/stream` 仍是 waterfall（`dsh-llm/lib/index.js` 里 `this.ctx.waterfall(this, "llm/stream", options, …)`），事件表里也是唯一与请求相关的那个；`Volatile` 仍从 cordis 导出、`Config` 仍是 `export const Config`；`schemastery` 仍是 `~3.18.4` 单副本（宿主全部包声明唯一范围，本包 `pnpm why` 只有一份）；`cordis` 仍是 `4.0.4`。
+- **排序依赖的官方哈希类名**：本插件 CSS 里那两条 `:has()` 规则挂的 `uV2eYG_trailing` / `uV2eYG_primary` 在 0.2.0 的 `dsh-client-ui-conversation` 里**哈希未变**（CSS-module 哈希按内容生成，源码没动就不动）。这类依赖失效的症状是**控件顺序错乱而不是报错**，所以每次升级都要按名字重取一次。
+- **清单**：`dsh.bundle.patch` / `dsh.client.platform` / `dsh.client.inject` 的字段形状与官方伴随包（`dsh-client-ui-settings-web-search`）逐字一致，六个被 inject 的包在 0.2.0 全部存在；`readPluginMeta()` 能读出 title 与 description（无 `icon`，本包没有图标资源，卡片走官方默认插画）。profile 的豁免表为空（`exemptions = {}`），所以闸门结果是真的。
+
+**变了 / 新增的**
+
+- **`plugins.bundle.config`**（新座位，见 §12 的座位依据）：服务 bundle 自己的配置，本插件不用。
+- **`plugins.item` 的文档现在写死了归属**：bundle 的配置应落在 `plugins.bundle.config` 或 `plugins.row.config`，等于把我们上一轮的座位选择变成了官方明文。
+- **reasoning effort 变成一等能力**：适配器在模型信息里自报 `reasoning: { efforts: [{id,name,description}], defaultEffort }`，`resolveCallWithInfo` 会**在发起 I/O 之前拒绝**模型不支持的显式 effort；pi-ai 侧还有 profile 的 `reasoningEfforts` 字典 → `thinkingLevelMap` 映射。**本插件不实现 effort（那会是重复造轮子），菜单里只有官方没有入口的 `mode` 与 `summary` 两项。**
+
+**判过但不采用的官方件（"不重复造轮子"的另一面：也不为了显得在融合而硬接）**
+
+| 官方件 | 为什么不用 |
+|---|---|
+| `Pill` | 确实能画输入栏那种胶囊，但**没有任何官方包在用它**（全树 0 处调用），没有"官方 chip + Menu"的现成范式可抄；而本插件的触发按钮还承担 composer trailing 行的布局约束（`max-width: 132px`、`order` 规则、`cqw` 单位、依赖官方 `_trailing` 类名做 `:has()`），换成 `Pill` 只剩视觉收益、风险却是不可见的布局回归 |
+| `SettingsFormModel` + `settingsTextField/NumberField`、`SettingsValueField`、`SettingsSecretField` | 这一族**只对"用户键入的文本草稿"建模**：`stage(field, {text, clear})` → `spec.parse(text)` → `plan()` 生成 ops，`shell()` 产出的正是 `SettingsForm` 要的六个布尔。本插件的配置页编辑的是**结构化数组**（逐行的 provider/model/mode/summary + 增删），套进去只能把整份数组序列化成一段文本再解析，属于为了用官方件而牺牲交互。官方件已经承担的那半边（表单外壳、保存按钮、失败提示）我们确实用了 |
+| `SegmentedControl` / `SegmentedTabs` | 会占掉输入栏宽度，而且本控件是"两个维度各自取值"的菜单，不是一组互斥 tab |
+
+**最"不正统"的一处：全局 fetch 包装的前提链条**（每次升级都要重跑）
+
+宿主半边唯一的写入通道是包装 `globalThis.fetch`，匹配 URL 以 `/responses` 结尾的 JSON 请求，再按 `body.model` + 会话亲和头解析路由。0.2.0 里这条链的每一环都复核过：
+
+1. `/responses` 这个 wire 现在由 **`dsh-llm-pi-ai`** 经外部库 `@earendil-works/pi-ai@0.87.1` 发起（`openai-responses` API）；
+2. pi-ai 是**调用时**取全局 fetch（`(options?.fetch ?? globalThis.fetch)(url, …)`），不是模块加载时捕获——所以运行中替换 `globalThis.fetch` 依然有效；
+3. `dsh-llm-pi-ai` 传给 pi-ai 的 options 只有 `apiKey` / `headers` / `signal`，**没有 `fetch`**，所以不会被旁路。
+
+这三条任何一条变了（例如宿主开始传自己的 `fetch`，或 pi-ai 改成模块级捕获、或换库），症状都是**静默失效**——请求照发、只是 `reasoning` 字段没被改写，没有任何报错。Dsh 也没有提供请求改写缝隙：`dsh-llm` 的服务面只有 `registerAdapter` / `listModels` / `resolveModelInfo` / `resolveCallConfig` / `prepareCall` / `stream` 等，waterfall 事件只有 `llm/stream`、`tools/*`、`internal/*` 与 `llm/adapters-updated`。**升级后要按上面三条重新验证一次**，这是本插件最脆的一环。
 
 ## 许可证
 
