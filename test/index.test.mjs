@@ -411,6 +411,354 @@ test('does not rewrite an ambiguous same-model request and restores after stream
 })
 
 // ---------------------------------------------------------------------------
+// Boundary guards
+//
+// This wrapper sits on the GLOBAL fetch, not on pi-ai's call site, so every
+// guard below is reachable by some caller: another plugin, a proxy layer, a
+// retry loop, a hand-built request. They are the plugin's "do no harm" surface —
+// each one must forward the request exactly as it arrived.
+// ---------------------------------------------------------------------------
+
+test('forwards every request the boundary does not own, byte for byte', { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (input, init) => { calls.push({ input, init }); return { ok: true } }
+
+  const listeners = []
+  const ctx = {
+    on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
+    effect: (callback) => callback(),
+    logger: { warn: () => {} },
+  }
+
+  try {
+    apply(ctx, { models: { get: () => [{ provider: 'cotton-codex', model: 'gpt-5.6-luna', mode: 'pro', summary: 'concise' }] } })
+    const listener = listeners.find((entry) => entry.name === 'llm/stream').listener
+    // An ACTIVE, CONFIGURED route for the very model every case below sends.
+    // Without it each request would go unrewritten for want of a route, and this
+    // test would keep passing after the guard under test was deleted — each case
+    // must be able to fail for exactly one reason.
+    const stream = listener(
+      { provider: 'cotton-codex', model: 'gpt-5.6-luna', sessionId: 'session-guard' },
+      () => (async function* () { yield { type: 'finish' } })(),
+    )
+    const url = 'https://api.example.com/v1/responses'
+    const headers = { 'content-type': 'application/json', 'x-client-request-id': 'session-guard' }
+    const body = JSON.stringify({ model: 'gpt-5.6-luna' })
+
+    // Positive control: the same shape with nothing to trigger a guard IS
+    // rewritten. Without this line a broken setup would make every case below
+    // vacuous — which is exactly how a guard test starts lying.
+    const control = { method: 'POST', headers, body }
+    await globalThis.fetch(url, control)
+    assert.equal(calls.length, 1)
+    assert.notEqual(calls[0].init, control, 'a request the boundary owns is rebuilt')
+    assert.equal(JSON.parse(calls[0].init.body).reasoning.mode, 'pro')
+    calls.length = 0
+
+    // A relative URL is eligible too, and on purpose: `new URL()` cannot parse it,
+    // so the fallback applies the same `/responses` suffix rule to the raw string.
+    // A caller that prefixes the base URL itself therefore still gets the rewrite.
+    const relative = { method: 'POST', headers, body }
+    await globalThis.fetch('/v1/responses', relative)
+    assert.equal(calls.length, 1)
+    assert.notEqual(calls[0].init, relative, 'a relative /responses URL is still admitted')
+    assert.equal(JSON.parse(calls[0].init.body).reasoning.mode, 'pro')
+    calls.length = 0
+
+    const cases = [
+      ['a GET', url, { method: 'GET', headers, body }],
+      ['no method at all, which fetch reads as GET', url, { headers, body }],
+      ['another path', 'https://api.example.com/v1/chat/completions', { method: 'POST', headers, body }],
+      ['a subpath that merely ends in the word', 'https://api.example.com/v1/responses/extra', { method: 'POST', headers, body }],
+      // An unparsable path that is not a Responses endpoint: this is the other arm
+      // of the same fallback the relative case above exercises.
+      ['a relative non-Responses path', '/v1/chat/completions', { method: 'POST', headers, body }],
+      // The body is compressed: reading it as text would hand back gzip bytes.
+      ['an encoded body', url, { method: 'POST', headers: { ...headers, 'content-encoding': 'gzip' }, body }],
+      ['a non-JSON body', url, { method: 'POST', headers: { ...headers, 'content-type': 'text/plain' }, body }],
+      ['a body that is not JSON at all', url, { method: 'POST', headers, body: '}{' }],
+      ['JSON that is not an object', url, { method: 'POST', headers, body: '"gpt-5.6-luna"' }],
+      ['a body with no model', url, { method: 'POST', headers, body: '{"stream":true}' }],
+      ['a body whose model is not a string', url, { method: 'POST', headers, body: '{"model":42}' }],
+      ['no body to read', url, { method: 'POST', headers }],
+      ['a body fetch refuses to give back', url, {
+        method: 'POST',
+        headers,
+        body: { get [Symbol.toStringTag]() { return 'blob' } },
+      }],
+    ]
+
+    for (const [label, input, init] of cases) {
+      const before = calls.length
+      await globalThis.fetch(input, init)
+      assert.equal(calls.length, before + 1, label)
+      assert.equal(calls[calls.length - 1].input, input, `${label}: the input reference is forwarded untouched`)
+      assert.equal(calls[calls.length - 1].init, init, `${label}: the init reference is forwarded untouched`)
+    }
+
+    await stream.next()
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('leaves a tracked route alone when the configuration does not list it', { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (input, init) => { calls.push({ input, init }); return { ok: true } }
+
+  const listeners = []
+  const ctx = {
+    on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
+    effect: (callback) => callback(),
+    logger: { warn: () => {} },
+  }
+
+  try {
+    // An empty list is the documented off switch, so a known, active route whose
+    // provider/model pair is absent from the configuration must not be touched.
+    apply(ctx, { models: { get: () => [] } })
+    const listener = listeners.find((entry) => entry.name === 'llm/stream').listener
+    const stream = listener(
+      { provider: 'cotton-codex', model: 'gpt-5.6-luna', sessionId: 'session-unlisted' },
+      () => (async function* () { yield { type: 'finish' } })(),
+    )
+
+    const init = {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-client-request-id': 'session-unlisted' },
+      body: JSON.stringify({ model: 'gpt-5.6-luna', stream: true }),
+    }
+    await globalThis.fetch('https://api.example.com/v1/responses', init)
+
+    // The route resolved — the tracker knows this session — and the only reason
+    // the request is not rewritten is that the configuration omits the pair.
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].init, init)
+    assert.equal(JSON.parse(calls[0].init.body).reasoning, undefined)
+
+    await stream.next()
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('reads a body and an affinity header through every shape fetch accepts', { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (input, init) => { calls.push({ input, init }); return { ok: true } }
+
+  const listeners = []
+  const ctx = {
+    on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
+    effect: (callback) => callback(),
+    logger: { warn: () => {} },
+  }
+
+  try {
+    apply(ctx, { models: { get: () => [{ provider: 'cotton-codex', model: 'gpt-5.6-luna', mode: 'pro', summary: 'detailed' }] } })
+    const listener = listeners.find((entry) => entry.name === 'llm/stream').listener
+    const track = () => listener(
+      { provider: 'cotton-codex', model: 'gpt-5.6-luna', sessionId: 'session-shapes' },
+      () => (async function* () { yield { type: 'finish' } })(),
+    )
+
+    // Array-of-pairs headers: a legal fetch shape, and the affinity lookup has a
+    // separate branch for it.
+    const paired = track()
+    await globalThis.fetch('https://api.example.com/v1/responses', {
+      method: 'POST',
+      headers: [['content-type', 'application/json'], ['session_id', 'session-shapes']],
+      body: JSON.stringify({ model: 'gpt-5.6-luna' }),
+    })
+    assert.equal(JSON.parse(calls[calls.length - 1].init.body).reasoning.mode, 'pro', 'affinity found in a header pair array')
+
+    // A byte body: the decoder has a branch per shape, not just for strings.
+    const bytes = track()
+    await globalThis.fetch('https://api.example.com/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'session_id': 'session-shapes' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-5.6-luna', reasoning: { effort: 'max' } })),
+    })
+    assert.deepEqual(
+      JSON.parse(calls[calls.length - 1].init.body).reasoning,
+      { effort: 'max', mode: 'pro', summary: 'detailed' },
+      'a Uint8Array body is decoded, and existing reasoning fields survive',
+    )
+
+    // Headers that throw when read: treated as absent, never as a hard failure,
+    // so the request still goes out (unaffinitised here, hence still rewritten
+    // because exactly one route is active).
+    const throwing = track()
+    await globalThis.fetch('https://api.example.com/v1/responses', {
+      method: 'POST',
+      headers: { get() { throw new Error('detached Headers') }, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'gpt-5.6-luna' }),
+    })
+    assert.equal(JSON.parse(calls[calls.length - 1].init.body).reasoning.mode, 'pro', 'a throwing headers.get() is not fatal')
+
+    await paired.next()
+    await bytes.next()
+    await throwing.next()
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('tracks nothing when the stream event carries no caller identity', { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (input, init) => { calls.push({ input, init }); return { ok: true } }
+
+  const listeners = []
+  const ctx = {
+    on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
+    effect: (callback) => callback(),
+    logger: { warn: () => {} },
+  }
+
+  try {
+    apply(ctx, { models: { get: () => [{ provider: 'p', model: 'gpt-5.6-luna', mode: 'pro', summary: 'concise' }] } })
+    const listener = listeners.find((entry) => entry.name === 'llm/stream').listener
+    const yielded = (async function* () { yield { type: 'finish' } })()
+    const next = () => yielded
+
+    // An incomplete or non-LLM stream event: the ordinary call still flows, but
+    // no route may be registered — a phantom registration would rewrite some
+    // later request that merely shares the model id.
+    for (const options of [
+      { model: 'gpt-5.6-luna' },
+      { provider: 'p' },
+      { provider: 'p', model: 'gpt-5.6-luna' },
+      { purpose: 'title', provider: 'p', model: 'gpt-5.6-luna', sessionId: 's' },
+      null,
+    ]) {
+      assert.equal(listener(options, next), yielded, 'the stream is returned untouched')
+    }
+
+    await globalThis.fetch('https://api.example.com/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'gpt-5.6-luna' }),
+    })
+    assert.equal(JSON.parse(calls[0].init.body).reasoning, undefined, 'nothing was registered, so nothing is rewritten')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('unregisters and rethrows when the stream factory throws', { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (input, init) => { calls.push({ input, init }); return { ok: true } }
+
+  const listeners = []
+  const ctx = {
+    on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
+    effect: (callback) => callback(),
+    logger: { warn: () => {} },
+  }
+
+  try {
+    apply(ctx, { models: { get: () => [{ provider: 'cotton-codex', model: 'gpt-5.6-luna', mode: 'pro', summary: 'concise' }] } })
+    const listener = listeners.find((entry) => entry.name === 'llm/stream').listener
+    const boom = new Error('stream factory failed')
+
+    // The route is registered before the factory runs, so a throwing factory must
+    // both propagate the original error and undo the registration.
+    assert.throws(
+      () => listener(
+        { provider: 'cotton-codex', model: 'gpt-5.6-luna', sessionId: 'session-doomed' },
+        () => { throw boom },
+      ),
+      (error) => error === boom,
+    )
+
+    await globalThis.fetch('https://api.example.com/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'session_id': 'session-doomed' },
+      body: JSON.stringify({ model: 'gpt-5.6-luna' }),
+    })
+    assert.equal(JSON.parse(calls[0].init.body).reasoning, undefined, 'the failed stream left no route behind')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+test('survives a malformed or hostile request instead of failing the caller', { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (input, init) => { calls.push({ input, init }); return { ok: true } }
+
+  const listeners = []
+  const ctx = {
+    on: (name, listener) => { listeners.push({ name, listener }); return () => {} },
+    effect: (callback) => callback(),
+    logger: { warn: () => {} },
+  }
+
+  try {
+    apply(ctx, { models: { get: () => [{ provider: 'cotton-codex', model: 'gpt-5.6-luna', mode: 'pro', summary: 'concise' }] } })
+    const listener = listeners.find((entry) => entry.name === 'llm/stream').listener
+    const stream = listener(
+      { provider: 'cotton-codex', model: 'gpt-5.6-luna', sessionId: 'session-hostile' },
+      () => (async function* () { yield { type: 'finish' } })(),
+    )
+
+    // Every case below must leave through the ONE exit that cannot fail the
+    // caller: the original fetch, with the original input and init references.
+    const expectForwarded = (label, expectedInput) => {
+      assert.equal(calls.length, 1, label)
+      assert.equal(calls[0].input, expectedInput, `${label}: the original input is forwarded`)
+      assert.equal(calls[0].init === undefined || typeof calls[0].init === 'object', true, label)
+      calls.length = 0
+    }
+
+    // A URL object is a legal fetch input but carries no `url` property, so the
+    // wrapper cannot tell what it points at and must stand aside.
+    const asUrl = new URL('https://api.example.com/v1/responses')
+    await globalThis.fetch(asUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', session_id: 'session-hostile' },
+      body: JSON.stringify({ model: 'gpt-5.6-luna' }),
+    })
+    expectForwarded('a URL object input', asUrl)
+
+    // A request whose body cannot be read, because cloning it throws.
+    const unclonable = {
+      url: 'https://api.example.com/v1/responses',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', session_id: 'session-hostile' },
+      clone() { throw new Error('body already consumed') },
+    }
+    await globalThis.fetch(unclonable, { method: 'POST' })
+    expectForwarded('a request that refuses to be cloned', unclonable)
+
+    // A request the wrapper WOULD rewrite, except that a header value it was
+    // given is one the Request constructor rejects. The rewrite must be
+    // abandoned whole — a half-built request must never leave.
+    const native = new Request('https://api.example.com/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'gpt-5.6-luna', stream: true }),
+    })
+    const illegal = { headers: { 'content-type': 'application/json', session_id: 'session-hostile', 'x-illegal': 'a\nb' } }
+    await globalThis.fetch(native, illegal)
+    expectForwarded('a rebuild the Request constructor rejects', native)
+
+    // Reading `init.body` itself throws: the async read rejects rather than
+    // returning, so this covers the wrapper's catch as well.
+    const hostile = { method: 'POST', get body() { throw new Error('hostile body getter') } }
+    await globalThis.fetch('https://api.example.com/v1/responses', hostile)
+    expectForwarded('a body property that throws when read', 'https://api.example.com/v1/responses')
+
+    await stream.next()
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+// ---------------------------------------------------------------------------
 // Manifest contract
 //
 // The host reads the display metadata and the icon WITHOUT activating the

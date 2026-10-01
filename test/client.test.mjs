@@ -680,6 +680,270 @@ test('does not request a catalog or render the composer control without a sessio
 })
 
 
+// ---------------------------------------------------------------------------
+// The states a user can hit and the wording they see: a route the catalog
+// dropped, a refused write, a catalog that will not load.
+// ---------------------------------------------------------------------------
+
+test('keeps a saved route the catalog no longer carries and renders both row kinds', async () => {
+  const runner = makeHookRunner()
+  const { require } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  const { ctx, state, form } = makeCtx({
+    form: {
+      state: readyValue({
+        models: [
+          { provider: 'provider-a', model: 'model-a', mode: 'pro', summary: 'detailed' },
+          { provider: 'provider-gone', model: 'model-gone', mode: 'pro', summary: 'concise' },
+        ],
+      }, 4),
+      mutate: async () => true,
+    },
+    modelCatalog: async () => ({
+      ok: true,
+      value: {
+        default: { provider: 'provider-a', model: 'model-a' },
+        groups: [{ id: 'provider-a', name: 'Provider A', models: [{ id: 'model-a', name: 'Model A' }] }],
+      },
+    }),
+  })
+  plugin.apply(ctx)
+
+  const props = { view: 'page', form }
+  renderRegistered(runner, state.registered[0], props)
+  runner.flushEffects()
+  await settle()
+  const before = runner.elements.length
+  renderRegistered(runner, state.registered[0], props)
+  const fresh = runner.elements.slice(before)
+
+  assert.deepEqual(
+    fresh.filter((element) => element.props?.className === 'rm-provider').map((element) => element.children[0]),
+    ['Provider A', 'reasoning-mode:unavailableGroup'],
+    'the dropped route keeps its own group instead of vanishing',
+  )
+
+  const rows = fresh.filter((element) => element.component?.name === 'ModelRow')
+  assert.deepEqual(
+    rows.map((row) => [row.props.item.provider, row.props.item.model, row.props.available, row.props.checked]),
+    [
+      ['provider-a', 'model-a', true, true],
+      ['provider-gone', 'model-gone', false, true],
+    ],
+    'a dropped route stays listed and stays checked until Save removes it',
+  )
+
+  // A shallow render records elements without running child components, so the
+  // two row bodies are invoked here directly — one per arm of the chip.
+  const live = rows[0].component(rows[0].props)
+  assert.equal(live.props.className, 'rm-model')
+  assert.equal(live.children[0].props.type, 'checkbox')
+  assert.equal(live.children[2], null, 'a route the catalog carries needs no chip')
+
+  const gone = rows[1].component(rows[1].props)
+  assert.equal(gone.children[2].props.className, 'rm-unavailable')
+  assert.deepEqual(gone.children[2].children, ['reasoning-mode:unavailable'])
+  assert.equal(gone.children[1].children[1].children[0], 'provider-gone · provider-gone/model-gone')
+})
+
+test('reports a refused write and lets Discard return to the saved list', async () => {
+  const runner = makeHookRunner()
+  const { require, primitives } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  const { ctx, state, form } = makeCtx({
+    form: {
+      state: readyValue({ models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] }, 5),
+      mutate: async () => false,
+    },
+    modelCatalog: async () => ({
+      ok: true,
+      value: {
+        default: { provider: 'provider-a', model: 'model-a' },
+        groups: [{ id: 'provider-a', name: 'Provider A', models: [{ id: 'model-a', name: 'Model A' }] }],
+      },
+    }),
+  })
+  plugin.apply(ctx)
+
+  const props = { view: 'page', form }
+  const shell = () => runner.elements.filter((element) => element.component === primitives.SettingsForm).pop()
+  renderRegistered(runner, state.registered[0], props)
+  runner.flushEffects()
+  await settle()
+  renderRegistered(runner, state.registered[0], props)
+
+  // Unchecking the only route stages a change; the Host then refuses it.
+  runner.elements.filter((element) => element.component?.name === 'ModelRow').pop().props.onToggle()
+  renderRegistered(runner, state.registered[0], props)
+  assert.equal(shell().props.state.dirty, true)
+
+  shell().props.onSave()
+  await settle()
+  renderRegistered(runner, state.registered[0], props)
+  assert.equal(shell().props.state.failed, true, 'a refusal raises the failure notice')
+  assert.equal(shell().props.state.dirty, true, 'and the staged change survives it')
+
+  // Discard is the only way back: the drafts drop, the notice clears.
+  shell().props.onDiscard()
+  const before = runner.elements.length
+  renderRegistered(runner, state.registered[0], props)
+  assert.equal(shell().props.state.dirty, false)
+  assert.equal(shell().props.state.failed, false)
+  assert.equal(
+    runner.elements.slice(before).filter((element) => element.component?.name === 'ModelRow').pop().props.checked,
+    true,
+    'the stored selection is back',
+  )
+})
+
+test('treats a write that throws as a refusal, never as success', async () => {
+  const runner = makeHookRunner()
+  const { require, primitives } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  const { ctx, state, form } = makeCtx({
+    form: {
+      state: readyValue({ models: [] }, 6),
+      mutate: async () => { throw new Error('transport closed') },
+    },
+    modelCatalog: async () => ({
+      ok: true,
+      value: {
+        default: { provider: 'provider-a', model: 'model-a' },
+        groups: [{ id: 'provider-a', name: 'Provider A', models: [{ id: 'model-a', name: 'Model A' }] }],
+      },
+    }),
+  })
+  plugin.apply(ctx)
+
+  const props = { view: 'page', form }
+  renderRegistered(runner, state.registered[0], props)
+  runner.flushEffects()
+  await settle()
+  renderRegistered(runner, state.registered[0], props)
+
+  runner.elements.filter((element) => element.component?.name === 'ModelRow').pop().props.onToggle()
+  renderRegistered(runner, state.registered[0], props)
+  const shell = runner.elements.filter((element) => element.component === primitives.SettingsForm).pop()
+  shell.props.onSave()
+  await settle()
+  renderRegistered(runner, state.registered[0], props)
+
+  const after = runner.elements.filter((element) => element.component === primitives.SettingsForm).pop()
+  assert.equal(after.props.state.failed, true)
+  assert.equal(after.props.state.dirty, true, 'a thrown write leaves the drafts in place')
+})
+
+test('surfaces a failed catalog load and retries it on demand', async () => {
+  const runner = makeHookRunner()
+  const { require } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  let attempts = 0
+  const { ctx, state, form } = makeCtx({
+    form: { state: readyValue({ models: [] }, 2), mutate: async () => true },
+    modelCatalog: async () => {
+      attempts += 1
+      if (attempts === 1) return { ok: false, error: { code: 'unavailable', message: 'catalog offline' } }
+      return {
+        ok: true,
+        value: {
+          default: { provider: 'provider-a', model: 'model-a' },
+          groups: [{ id: 'provider-a', name: 'Provider A', models: [{ id: 'model-a', name: 'Model A' }] }],
+        },
+      }
+    },
+  })
+  plugin.apply(ctx)
+
+  const props = { view: 'page', form }
+  renderRegistered(runner, state.registered[0], props)
+  runner.flushEffects()
+  await settle()
+  let before = runner.elements.length
+  renderRegistered(runner, state.registered[0], props)
+
+  const alert = runner.elements.slice(before).filter((element) => element.props?.className === 'rm-catalog-error').pop()
+  assert.ok(alert, 'the failure is announced, not swallowed')
+  assert.match(alert.children[0].children[0], /reasoning-mode:catalogFailed \(catalog offline\)/)
+  const retry = runner.elements.slice(before).filter((element) => element.component === 'button').pop()
+  assert.deepEqual(retry.children, ['reasoning-mode:retry'])
+  assert.equal(
+    runner.elements.slice(before).filter((element) => element.component?.name === 'ModelRow').length,
+    0,
+    'nothing to tick while the catalog is missing',
+  )
+
+  retry.props.onClick()
+  await settle()
+  before = runner.elements.length
+  renderRegistered(runner, state.registered[0], props)
+  const afterRetry = runner.elements.slice(before)
+  assert.equal(attempts, 2, 'the retry asks the Host again')
+  assert.equal(afterRetry.filter((element) => element.props?.className === 'rm-catalog-error').length, 0)
+  assert.ok(afterRetry.filter((element) => element.component?.name === 'ModelRow').pop(), 'and renders the catalog it got')
+})
+
+test('hides the composer control when the catalog cannot be reached at all', async () => {
+  const runner = makeHookRunner()
+  const { require } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  let attempts = 0
+  const { ctx, state } = makeCtx({
+    value: { models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] },
+    modelCatalog: async () => { attempts += 1; throw new Error('catalog unreachable') },
+  })
+  plugin.apply(ctx)
+
+  const registered = state.registered[1]
+  const props = { sessionId: 'session-a', useProjection: () => ({ next: null, lastUsed: null }) }
+  assert.equal(renderRegistered(runner, registered, props), null)
+  runner.flushEffects()
+  await settle()
+  assert.equal(attempts, 1)
+  assert.equal(renderRegistered(runner, registered, props), null, 'no route means no control')
+
+  // A new session re-runs the effect, which must first cancel the one it
+  // replaces — otherwise a late answer would set the new session's route.
+  renderRegistered(runner, registered, { sessionId: 'session-b', useProjection: () => ({ next: null, lastUsed: null }) })
+  runner.flushEffects()
+  await settle()
+  assert.equal(attempts, 2)
+})
+
+test('warns on the console when the Host refuses a composer write', async () => {
+  const runner = makeHookRunner()
+  const { require, primitives } = makeRequire({ React: runner.React })
+  const plugin = definition.factory(require)
+  const { ctx, state } = makeCtx({
+    value: { models: [{ provider: 'provider-a', model: 'model-a', mode: 'standard', summary: 'auto' }] },
+    set: async () => { throw new Error('refused by the Host') },
+  })
+  plugin.apply(ctx)
+
+  const props = {
+    sessionId: 'session-1',
+    useProjection: () => ({ next: { provider: 'provider-a', model: 'model-a' }, lastUsed: null }),
+  }
+  const control = renderRegistered(runner, state.registered[1], props)
+  runner.flushEffects()
+  const menu = runner.elements.filter((element) => element.component === primitives.Menu).pop()
+
+  // The pill has nowhere to report a refused write, so the console is the only
+  // record — and it must exist, or the failure is invisible.
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = (message) => { warnings.push(String(message)) }
+  try {
+    control.props.anchor.props.onClick?.()
+    menu.props.onSelect('mode:pro')
+    await settle()
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /\[reasoning-mode\] the composer write failed: refused by the Host/)
+})
+
+
 test('can be concatenated with the sibling reasoning-summary client bundle', () => {
   const modeBundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   const summaryBundle = readFileSync(new URL('../../dsh-reasoning-summary/lib/client.js', import.meta.url), 'utf8')

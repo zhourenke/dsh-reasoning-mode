@@ -18,8 +18,8 @@ README 是刻意精简的：上述四类内容曾经在 README 里，按要求�
 | `lib/client.js` | 浏览器编译产物，**必须提交** |
 | `lib/types/index.d.ts` | 宿主类型声明，**必须提交** |
 | `lib/types/client.d.ts` | 浏览器类型声明，**必须提交** |
-| `test/index.test.mjs` | 宿主半边（11 项）：schema 归一化、请求改写、路由解析、fetch 包装与还原、模块契约、清单契约（显示元数据） |
-| `test/client.test.mjs` | 浏览器半边（16 项）：**真正执行** `lib/client.js`，含配置页挂载、摘要视图、带修订号的写入、未 ready / 无 form 分支、session 默认模型 fallback 与无 session 分支 |
+| `test/index.test.mjs` | 宿主半边（17 项）：schema 归一化、请求改写、路由解析、fetch 包装与还原、**边界守卫与错误分支（不属于本插件的请求逐字节转交且有正向对照、畸形/敌意请求不许把调用方拖死、在飞但未配置的路由不改写）**、模块契约、清单契约（显示元数据） |
+| `test/client.test.mjs` | 浏览器半边（22 项）：**真正执行** `lib/client.js`，含配置页挂载、摘要视图、带修订号的写入、**被拒绝的写入 / 抛错的写入 / 放弃修改**、**目录里已消失的已保存路由（「不可用」分组与两种行体）**、**目录加载失败与重试**、未 ready / 无 form 分支、session 默认模型 fallback、**目录不可达时控件隐藏与在飞请求取消**、无 session 分支 |
 | `cordis.patch.yml` | profile 层插入声明（`- insert:` 形式） |
 | `icon.svg` | 插件列表的图标：顶层 `icon` 指向它，宿主直接读成内联 data URL（不经过代码） |
 | `locale/en.json`、`locale/zh.json` | 插件列表的显示名与说明（`{"meta":{"title","description"}}`，**文件名即语言 id**）；同样是宿主直接读盘（见 §18） |
@@ -306,13 +306,39 @@ node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(async b => { con
 
 | 文件 | 覆盖 |
 |---|---|
-| `test/index.test.mjs` | `Config.toJSON()` 里 `models` 的 volatile 标记与字段形状、`normalizeModels` 的归一化、`applyReasoningBody` 保留其它字段、`isResponsesRequest`、`sameModelRoutes` 的去重与「同 model 不同 provider 保持分开」（"恰好一个候选才解析出路由"由下面的端到端用例证明）、`apply()` 装 fetch 包装并在卸载后还原、原生 `Request` 体重建与 `content-length` 移除、并发同 model 路由的亲和选择、stream 结束后的还原、模块契约（`name`/`inject`/`apply`）、**volatile 的活性（改 `config.models` 后下一请求即生效）** |
+| `test/index.test.mjs` | `Config.toJSON()` 里 `models` 的 volatile 标记与字段形状、`normalizeModels` 的归一化、`applyReasoningBody` 保留其它字段、`isResponsesRequest`、`sameModelRoutes` 的去重与「同 model 不同 provider 保持分开」（"恰好一个候选才解析出路由"由下面的端到端用例证明）、`apply()` 装 fetch 包装并在卸载后还原、原生 `Request` 体重建与 `content-length` 移除、并发同 model 路由的亲和选择、stream 结束后的还原、模块契约（`name`/`inject`/`apply`）、**volatile 的活性（改 `config.models` 后下一请求即生效）**、**边界守卫全套（含"先证明本可改写、再证明被守卫拦住"的正向对照；相对 `/responses` 被接受；在飞但未配置的路由不改写）**、**畸形与敌意请求（不可克隆、`Request` 构造器拒绝的重建、读 body 就抛的 getter）**、**`llm/stream` 缺身份不注册 / 工厂抛错则注销并原样抛出** |
 | `test/client.test.mjs` | `plugins.row.config` 注册（key、`whileServed` 门禁）与 `inject` 面、**输入栏控件渲染出的就是官方 `Menu`：一张平面卡片（两条 `label` + 五个选项行 + 一条 `separator`）、`selectedIds` 两项、触发器恰好三段子节点（值 / 摘要 / 箭头，无自绘分隔符）**、写入只认选项行 id（标题、分隔线、未知 id 都不写）、**在途写入时触发器换成官方 `StateDot` 并置 `aria-busy` 与 `disabled`、落定后换回箭头**、不再自实现菜单的缺席断言（无 `rm-menu*`、`rm-cell*`、`rm-option*`、`submenu`、`createPortal`、`ReactDOM`、`mousedown`、`getBoundingClientRect`）、触发器样式与官方逐 token 对齐（`font-weight:400`、`label-secondary`、`radius-sm`、`min(360px,45cqw)`、focus ring）且卡片不再自设 `overflow`、死规则与死 key（`rm-readonly`、`menuLabel`）已删、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/自绘卡片样式）、**挂载一次配置页并断言注入面被转交、且不会自带 scope**、未 ready / 无 form 时返回 `null`、**摘要视图只出一行文本且不读目录**、**暂存后一次带修订号的写入**、**计数以参数交给官方翻译器（`{n}` 由官方插值，插件不再自己 `replace`；桩记录每次调用的 params）**、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
 
 两条纪律：
 
 - **mock 必须来自实测的宿主契约。** `test/client.test.mjs` 顶部的注释块记录了槽所有者、注册形状、`ConfigPageForm` 与 `ConfigFormSnapshot` 字段的来源（对应包与文件），改 mock 前先回去读那些声明。
 - **断言「注入面被转交」，而不只是断言 `inject()` 返回了什么。** owner props 只有 `view` 与 `form`，页面唯一的额外输入就是 `inject()` 面，所以测试要真的调用一次 `render({ view: 'page', form })` 并用返回的 props 执行页面组件；同时也断言页面**没有**自己塞一个 `scope` 进去。
+
+### 覆盖率为纲的清理：本仓库的实测结果
+
+按发布指南「覆盖率为纲的死代码清理」（§2.12）对两个半边各跑了一次：
+
+```powershell
+pnpm run coverage      # = build + node --test --experimental-test-coverage
+```
+
+第一次测量（清理前，27 项）：`index.js` 行 89.10% / 分支 81.71%，`client.js` 行 95.95% / 分支 71.35%。**未执行的行没有一行是"构造上不可达"，全部是"可达但没测"**——于是按指南的规则补测试而不是删代码，补完（39 项）：
+
+| 文件 | 行 | 分支 | 函数 | 补测的分支 |
+| --- | --- | --- | --- | --- |
+| `lib/index.js` | **100%** | 94.57% | 97.22% | 不属于本插件的请求逐字节转交（GET／无 method／别的路径／路径后缀多一段／gzip 体／非 JSON 体／坏 JSON／非对象 JSON／无 model／非字符串 model／无 body／取不回的 body）、**相对 `/responses` 被接受**（同一 catch 的另一臂另有用例）、数组对形式的 headers、`Uint8Array` 体、`headers.get()` 抛错、`llm/stream` 缺身份时不注册、流工厂抛错时注销并原样抛出、不可克隆的请求、`Request` 构造器拒绝的重建、读 `body` 就抛的 getter、**在飞但未配置的路由不改写** |
+| `lib/client.js` | **100%** | 79.29% | 96.77% | 目录里已消失的已保存路由（「已保存但当前不可用」分组 + 两种行体）、被拒绝的写入 + 放弃修改、抛错的写入、目录加载失败与「重试」、目录整体不可达时控件隐藏与在飞请求取消、输入栏写入被拒时的 console 警告 |
+
+两条**必须一起用的判据**：
+
+- **每个"守卫用例"前面要有一个正向对照。** 第一版用例把守卫挨个发了一遍就断言"原样转发"，**变异测试当场证明它们全是假绿**：那几条请求根本没有路由在飞，无论守卫在不在都不会被改写。现在 `forwards every request...` 开头先发一条**本该被改写**的请求并断言它真的被改写了，之后每个用例才只可能因为守卫而失败。
+- **变异测试（改坏产物、看用例是否变红）是唯一能证明"测试真的有在盯"的办法。** 本轮逐个删/改 11 处守卫与闸门，结果：POST-only 准入、`content-encoding`、`content-type`、`JSON.parse` 的 catch、读 body 的外层 catch、已配置路由闸门、歧义跳过、亲和过滤、流注册、不可克隆请求——**全部 CAUGHT**；只有 `typeof body.model !== 'string'` 那道"改不掉行为"（类型收窄），因此明确保留并注释。**变异测试同时找出了两处真冗余**（见上面的清理记录：`resolve()` 里的重复闸门、`requestBody()` 里的重复 catch），而这两处靠读代码是看不出来的。
+
+值得记的三条：
+
+- **边界守卫不是死代码，但"没人测"和"不可达"是两件事。** 这个 fetch 包装挂在**全局** `fetch` 上（不是 pi-ai 的调用点），所以每一道守卫都有真实触发者；此前它们只是"靠推理认为可达"。补测之后，删掉任何一道都会当场变红。
+- **沙箱探测能省掉臆测。** 本想用"已 detach 的 `ArrayBuffer` 让 `TextDecoder.decode` 抛错"来覆盖包装器里 `await requestBody()` 的 catch，实测 V8 下**不抛**（返回空串）；真正能触发的是**读 `init.body` 就抛的 getter**——`requestBody` 是 async，属性读取的同步抛错会变成 rejection。
+- **浅渲染不会执行子组件。** 测试里的 `renderRegistered` 只调一层，`ModelRow` 的函数体从未被执行（覆盖率把它照出来了）。现在用例直接 `row.component(row.props)` 调一次，两种行体各覆盖一个分支。
 
 ## 发布纪律
 
@@ -382,12 +408,17 @@ foreach ($f in 'README.md','README.en.md') {
 | `src/index.ts` | `interface DecodedBody { text: string }` 只是给字符串套了层壳（4 处 `.text`） | `decodeBody()` / `requestBody()` 直接返回 `string \| undefined`；`TextDecoder` 提到模块级复用 |
 | `src/index.ts` | `isResponsesRequest` 声明处不导出、文件末尾另写一条 `export { isResponsesRequest }`，与其余 helper 的 `export function` 不一致 | 行内 `export function`，删掉末尾那条导出语句 |
 | `src/index.ts` | `routeKey()` 带 `export` 但模块外无人消费（测试也不 import） | 去掉 `export`。导出面的判据：**只导出测试真正 import 的名字**（`normalizeModels` / `applyReasoningBody` / `isResponsesRequest` / `sameModelRoutes` 各有用例） |
+| `src/index.ts` | `resolve()` 里有一道**永远无法改变结果**的闸门：它先查 `getSettings().has(routeKey(only))`，而调用方紧接着又 `getSettings().get(routeKey(route))` 并在拿不到时原样转发——同一个 map、同一个 key，第一道查不出任何第二道查不到的东西（实测：删掉它，整套测试照旧全绿，正是"变异测试"意义上的死逻辑） | 删掉，`createRequestTracker()` 因此不再需要 `getSettings` 参数，每次请求少读一遍配置 |
+| `src/index.ts` | `requestBody()` 内部的 `try/catch` 与包装器里 `await requestBody()` 外层的 `try/catch` 是**两个 catch 干一件事**：变异测试证明，任留一个都足以让"克隆失败的请求仍被原样转发"，删掉内层后外层立刻变成可被钉住的分支 | 删掉内层那个，`requestBody()` 的契约改为"可能 reject"，由唯一调用方的外层 catch 统一处置 |
+| `src/index.ts` | `!isRecord(body) \|\| typeof body.model !== 'string'` 这道守卫**删掉也不会改变行为**（非字符串 model 永远匹配不到在飞路由，查找结果为空 → 原样转发） | **保留并写明理由**：它是类型收窄，删了就得改成 `body.model as string`——为"看着像死代码"而拿掉类型契约是净损失 |
 | `src/client.ts` | 组件自己再插值一遍：`String(translate(key, { n })).replace(/\{n\}/g, …)` | 删掉 `.replace`。官方翻译器本身就填占位符（`dsh-client-locale/lib/client.js`：`template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match)`），且原来那条回退分支永不触发（`selected` 是唯一带 `{n}` 的 key，调用时必带数字） |
 | `test/client.test.mjs` | 两个 React 桩都提供 `useLayoutEffect` / `useRef`，而插件只用 `useEffect` / `useMemo` / `useState` | 删掉这两个死桩：将来真用到会在测试里当场炸出来，比静默存在有用 |
 
 **查到但故意保留的**（都属于"看着像残留、其实有据"，写在这里免得下一个人再查一遍）：
 
-- `x-client-request-id` 不是自造的名字：pi-ai 的 `openai-responses.js` 在非 OpenRouter 格式下**同时**发 `session_id` 与 `x-client-request-id`。清单里补上了 OpenRouter 格式的 `x-session-id`——此前缺失，那类 provider 上亲和查找会永远落空（不是死代码，是漏了一个分支）。
+- **`x-client-request-id` 不是自造的名字**：pi-ai 的 `openai-responses.js` 在非 OpenRouter 格式下**同时**发 `session_id` 与 `x-client-request-id`。清单里补上了 OpenRouter 格式的 `x-session-id`——此前缺失，那类 provider 上亲和查找会永远落空（不是死代码，是漏了一个分支）。
+- **`isResponsesRequest` 的 catch 分支接受相对 URL，这是有意的**：`new URL()` 解析不了相对路径，于是回退成对**原始字符串**做同一个 `/responses` 后缀判定——所以 `/v1/responses` 一样会被改写。写测试时我原先按直觉把它当成"应当原样转发"，结果被测试当场纠正（用例失败、打印出的 init 里已经多了 `reasoning`）。**这类"我以为它在守、其实它放行"的分支，只有把请求真的发一遍才会露出来。**
+- `headerValue()` 的三个分支（`get()` / `[[k, v]]` / 普通对象）与包装器里的 `content-encoding`、`content-type`、`typeof original !== 'function'` 守卫都可达：它们守的是**全局 fetch 边界**——任何调用方都可能递 `Headers`、数组、字节体或 gzip 体，不是只服务 pi-ai。
 - `headerValue()` 的三个分支（`get()` / `[[k, v]]` / 普通对象）与包装器里的 `content-encoding`、`content-type`、`typeof original !== 'function'` 守卫都可达：它们守的是**全局 fetch 边界**——任何调用方都可能递 `Headers`、数组、字节体或 gzip 体，不是只服务 pi-ai。
 - `.rm-control-root` 的 `order: 1` 与 `:has()` 块里那条 `order: 1` 值相同：前者是官方 hash 类名变化后仍然生效的兜底，后者是当前构建下的整行排序。已在 CSS 注释里写明"两处都是 1，故意的"，不再是可疑重复。
 - `dsh.client.inject` 六项全部保留，逐条有消费方：`dsh-client-ui-primitives` 是 `require` 的直接依赖（官方有 7 个包同样把它列进去），`dsh-client-ui-conversation` 与 `dsh-client-ui-plugin-manager` 分别是 `conversation.input.right` 与 `plugins.row.config` 两个座位的所有者（把 `dsh-client-ui-conversation` 列进 inject 的官方包约 20 个），其余三项提供 `locale` / `configForms` / `remote` 服务。

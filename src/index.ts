@@ -257,18 +257,21 @@ function effectiveHeaders(input: unknown, init: unknown): Record<string, string>
   return Object.fromEntries(result)
 }
 
+/**
+ * The body text of the request, or `undefined` when this boundary cannot read
+ * it. A `Request` whose body was already consumed makes `clone()` throw and a
+ * decoded body can throw too, so this may REJECT: the caller treats any error
+ * from here as "not our request" and forwards it untouched, and catching the
+ * same failure inside as well would only be a second catch for one job.
+ */
 async function requestBody(input: unknown, init: unknown): Promise<string | undefined> {
   if (isRecord(init) && init.body !== undefined) return decodeBody(init.body)
   if (input === null || typeof input !== 'object') return undefined
   const request = input as RequestLike
   if (typeof request.clone !== 'function') return undefined
-  try {
-    const clone = request.clone()
-    if (typeof clone.text !== 'function') return undefined
-    return await clone.text()
-  } catch {
-    return undefined
-  }
+  const clone = request.clone()
+  if (typeof clone.text !== 'function') return undefined
+  return await clone.text()
 }
 
 function inheritedRequestInit(request: RequestLike): Record<string, unknown> {
@@ -335,7 +338,15 @@ type RouteResolution = {
   candidates: readonly RequestRoute[]
 }
 
-function createRequestTracker(getSettings: () => Map<string, ReasoningSelection>): {
+/**
+ * Remembers the routes of the LLM streams that are in flight, so the fetch
+ * boundary can tell which provider a request belongs to. It deliberately says
+ * nothing about the configuration: the boundary re-reads the live settings per
+ * request, so a configured-route filter here would be a second gate on the same
+ * map — one that could never change the outcome, since the caller looks the
+ * selection up again and forwards the request when it is absent.
+ */
+function createRequestTracker(): {
   add(route: RequestRoute & { sessionId: string }): () => void
   resolve(sessionId: string | undefined, model: string): RouteResolution
 } {
@@ -354,8 +365,7 @@ function createRequestTracker(getSettings: () => Map<string, ReasoningSelection>
         : [...active.values()].filter((item) => item.sessionId === sessionId)
       const candidates = sameModelRoutes(observed, model)
       const ambiguousWithoutAffinity = sessionId === undefined && candidates.length > 1
-      const only = candidates.length === 1 ? candidates[0] : undefined
-      const route = only !== undefined && getSettings().has(routeKey(only)) ? only : undefined
+      const route = ambiguousWithoutAffinity || candidates.length !== 1 ? undefined : candidates[0]
       return { route, ambiguousWithoutAffinity, candidates }
     },
   }
@@ -408,6 +418,9 @@ function installFetchWrapper(
     } catch {
       return original.call(this, input, init)
     }
+    // Type narrowing, not a behaviour gate: a body without a string `model` can
+    // never match an active route, so the lookup below would find nothing and
+    // forward the request anyway. This is what type-checks the `model` passed on.
     if (!isRecord(body) || typeof body.model !== 'string') {
       return original.call(this, input, init)
     }
@@ -470,7 +483,7 @@ export function apply(ctx: Context, config: PluginConfig): void {
     )
   }
 
-  const tracker = createRequestTracker(getSettings)
+  const tracker = createRequestTracker()
   ctx.on('llm/stream', (options: any, next: () => AsyncIterable<any>) => {
     if (
       options?.purpose !== undefined

@@ -52,7 +52,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
     "build": "tsc && tsc -p tsconfig.client.json",
-    "test": "pnpm run build && node --test"
+    "test": "pnpm run build && node --test",
+    "coverage": "pnpm run build && node --test --experimental-test-coverage"
   },
   "license": "MIT",
   "dependencies": {
