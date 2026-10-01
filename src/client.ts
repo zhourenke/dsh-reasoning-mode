@@ -142,7 +142,10 @@ window.__ModuleLoader__.load({
       .rm-route { color: var(--dsw-alias-label-tertiary); margin-top: 2px; font-size: 11px; }
       .rm-unavailable { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
       .rm-control-root { min-width: 0; position: relative; display: inline-flex; order: 1; }
-      /* The right slot is rendered before the model seat; keep this ordering local to this plugin. */
+      /* The root's own order: 1 is the fallback that survives a change of the
+         official class hash; while the hash holds, this block pins the whole
+         row. Both say 1 on purpose. The right slot is rendered before the model
+         seat, so without the block the pill would sit left of it. */
       .uV2eYG_trailing:has(.rm-control-root) > [data-slot='conversation.input.model'] { order: 0; }
       .uV2eYG_trailing:has(.rm-control-root) > .rm-control-root { order: 1; }
       .uV2eYG_trailing:has(.rm-control-root) > span:has(> button[aria-haspopup='dialog']) { order: 2; }
@@ -234,10 +237,14 @@ window.__ModuleLoader__.load({
      * settings form's; this component owns the catalog-driven route list only.
      */
     function ReasoningModeCard(props: any): any {
+      // `t` fills `{n}` itself from this parameter (`dsh-client-locale`: the
+      // template's `{name}` placeholders are substituted from the params
+      // object), so the count is passed through rather than patched into the
+      // returned string afterwards.
       const translate = props.t as (key: string, params?: { n?: number }) => unknown
       const t = (key: string, ...args: any[]) => String(
         translate(key, args.length > 0 ? { n: args[0] } : undefined),
-      ).replace(/\{n\}/g, String(args[0] ?? 0))
+      )
       const form = props.form as ConfigPageForm | undefined
       const sessionFace = props.sessionFace as () => SessionFace | undefined
       const [dirty, setDirty] = useState(false)

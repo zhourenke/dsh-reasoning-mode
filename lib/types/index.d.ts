@@ -30,7 +30,6 @@ export interface RequestRoute {
     provider: string;
     model: string;
 }
-export declare function routeKey(route: RequestRoute): string;
 /**
  * The profile entry's configuration. `models` is volatile, so the loader hands
  * `apply` one stable reference and updates its value in place when the settings
@@ -50,11 +49,12 @@ export declare function normalizeModels(value: unknown): ModelSettings[];
 /** Apply only the plugin-owned reasoning fields and retain every other field. */
 export declare function applyReasoningBody(body: Record<string, unknown>, selection: ReasoningSelection): Record<string, unknown>;
 /**
- * Return one route only when all active candidates agree on provider and model.
- * Different providers with the same model are deliberately ambiguous.
+ * The distinct routes observed for `model`, in first-seen order. Routes that
+ * differ only by provider stay separate — whether that is ambiguous depends on
+ * whether request affinity narrowed the set first, which the caller knows and
+ * this function does not.
  */
-export declare function resolveRouteCandidate(candidates: readonly RequestRoute[], model: string): RequestRoute | undefined;
-declare function isResponsesRequest(url: string, method: string): boolean;
+export declare function sameModelRoutes(candidates: readonly RequestRoute[], model: string): RequestRoute[];
+export declare function isResponsesRequest(url: string, method: string): boolean;
 export declare const inject: string[];
 export declare function apply(ctx: Context, config: PluginConfig): void;
-export { isResponsesRequest };

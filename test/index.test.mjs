@@ -7,7 +7,7 @@ import {
   applyReasoningBody,
   isResponsesRequest,
   normalizeModels,
-  resolveRouteCandidate,
+  sameModelRoutes,
   Config,
   inject,
   name,
@@ -76,15 +76,25 @@ test('supports explicit Standard mode and an absent reasoning object', () => {
   )
 })
 
-test('fails closed for same-model routes from different providers', () => {
-  assert.equal(resolveRouteCandidate([
+// The tracker rewrites a request only when exactly one distinct route remains,
+// which is what makes two providers sharing one model ambiguous; that decision is
+// proved end-to-end below ("does not rewrite an ambiguous same-model request").
+// This test pins the set the decision is made from.
+test('keeps same-model routes from different providers distinct and collapses exact duplicates', () => {
+  assert.deepEqual(sameModelRoutes([
     { provider: 'cotton-codex', model: 'gpt-5.6-luna' },
     { provider: 'cotton-codex-plus', model: 'gpt-5.6-luna' },
-  ], 'gpt-5.6-luna'), undefined)
-  assert.deepEqual(resolveRouteCandidate([
+  ], 'gpt-5.6-luna'), [
+    { provider: 'cotton-codex', model: 'gpt-5.6-luna' },
+    { provider: 'cotton-codex-plus', model: 'gpt-5.6-luna' },
+  ])
+  assert.deepEqual(sameModelRoutes([
     { provider: 'cotton-codex-plus', model: 'gpt-5.6-luna' },
     { provider: 'cotton-codex-plus', model: 'gpt-5.6-luna' },
-  ], 'gpt-5.6-luna'), { provider: 'cotton-codex-plus', model: 'gpt-5.6-luna' })
+  ], 'gpt-5.6-luna'), [{ provider: 'cotton-codex-plus', model: 'gpt-5.6-luna' }])
+  assert.deepEqual(sameModelRoutes([
+    { provider: 'cotton-codex', model: 'gpt-5.6-luna' },
+  ], 'gpt-5.6-sol'), [])
 })
 
 

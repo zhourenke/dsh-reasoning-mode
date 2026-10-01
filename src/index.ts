@@ -47,7 +47,7 @@ const ModelSettingsSchema = z.object({
   summary: SummarySchema.default('auto'),
 })
 
-export function routeKey(route: RequestRoute): string {
+function routeKey(route: RequestRoute): string {
   return `${route.provider}\u0000${route.model}`
 }
 
@@ -119,19 +119,18 @@ export function applyReasoningBody(
 }
 
 /**
- * Return one route only when all active candidates agree on provider and model.
- * Different providers with the same model are deliberately ambiguous.
+ * The distinct routes observed for `model`, in first-seen order. Routes that
+ * differ only by provider stay separate — whether that is ambiguous depends on
+ * whether request affinity narrowed the set first, which the caller knows and
+ * this function does not.
  */
-export function resolveRouteCandidate(
-  candidates: readonly RequestRoute[],
-  model: string,
-): RequestRoute | undefined {
+export function sameModelRoutes(candidates: readonly RequestRoute[], model: string): RequestRoute[] {
   const distinct = new Map<string, RequestRoute>()
   for (const candidate of candidates) {
     if (candidate.model !== model) continue
     distinct.set(routeKey(candidate), candidate)
   }
-  return distinct.size === 1 ? [...distinct.values()][0] : undefined
+  return [...distinct.values()]
 }
 
 function requestUrl(input: unknown): string | undefined {
@@ -184,17 +183,13 @@ function requestHeader(input: unknown, init: unknown, name: string): string | un
   )
 }
 
-function isResponsesRequest(url: string, method: string): boolean {
+export function isResponsesRequest(url: string, method: string): boolean {
   if (method !== 'POST') return false
   try {
     return /\/responses\/?$/.test(new URL(url).pathname)
   } catch {
     return /\/responses\/?(?:\?.*)?$/.test(url)
   }
-}
-
-interface DecodedBody {
-  text: string
 }
 
 interface RequestLike {
@@ -218,10 +213,13 @@ interface RequestLike {
   text?: () => Promise<string>
 }
 
-function decodeBody(value: unknown): DecodedBody | undefined {
-  if (typeof value === 'string') return { text: value }
-  if (value instanceof Uint8Array) return { text: new TextDecoder().decode(value) }
-  if (value instanceof ArrayBuffer) return { text: new TextDecoder().decode(new Uint8Array(value)) }
+const decodeText = new TextDecoder()
+
+/** The body text of a fetch request, for the two shapes this boundary can see. */
+function decodeBody(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (value instanceof Uint8Array) return decodeText.decode(value)
+  if (value instanceof ArrayBuffer) return decodeText.decode(new Uint8Array(value))
   return undefined
 }
 
@@ -259,7 +257,7 @@ function effectiveHeaders(input: unknown, init: unknown): Record<string, string>
   return Object.fromEntries(result)
 }
 
-async function requestBody(input: unknown, init: unknown): Promise<DecodedBody | undefined> {
+async function requestBody(input: unknown, init: unknown): Promise<string | undefined> {
   if (isRecord(init) && init.body !== undefined) return decodeBody(init.body)
   if (input === null || typeof input !== 'object') return undefined
   const request = input as RequestLike
@@ -267,7 +265,7 @@ async function requestBody(input: unknown, init: unknown): Promise<DecodedBody |
   try {
     const clone = request.clone()
     if (typeof clone.text !== 'function') return undefined
-    return { text: await clone.text() }
+    return await clone.text()
   } catch {
     return undefined
   }
@@ -337,15 +335,6 @@ type RouteResolution = {
   candidates: readonly RequestRoute[]
 }
 
-function distinctCandidates(candidates: readonly RequestRoute[], model: string): RequestRoute[] {
-  const distinct = new Map<string, RequestRoute>()
-  for (const candidate of candidates) {
-    if (candidate.model !== model) continue
-    distinct.set(routeKey(candidate), candidate)
-  }
-  return [...distinct.values()]
-}
-
 function createRequestTracker(getSettings: () => Map<string, ReasoningSelection>): {
   add(route: RequestRoute & { sessionId: string }): () => void
   resolve(sessionId: string | undefined, model: string): RouteResolution
@@ -360,19 +349,14 @@ function createRequestTracker(getSettings: () => Map<string, ReasoningSelection>
       return () => active.delete(item.id)
     },
     resolve(sessionId, model) {
-      const allCandidates = [...active.values()].filter((item) => item.model === model)
-      const candidates = sessionId === undefined
-        ? allCandidates
-        : allCandidates.filter((item) => item.sessionId === sessionId)
-      const distinct = distinctCandidates(candidates, model)
-      const ambiguousWithoutAffinity = sessionId === undefined && distinct.length > 1
-      const candidate = ambiguousWithoutAffinity ? undefined : resolveRouteCandidate(distinct, model)
-      const route = candidate !== undefined && getSettings().has(routeKey(candidate)) ? candidate : undefined
-      return {
-        route,
-        ambiguousWithoutAffinity,
-        candidates: distinct,
-      }
+      const observed = sessionId === undefined
+        ? [...active.values()]
+        : [...active.values()].filter((item) => item.sessionId === sessionId)
+      const candidates = sameModelRoutes(observed, model)
+      const ambiguousWithoutAffinity = sessionId === undefined && candidates.length > 1
+      const only = candidates.length === 1 ? candidates[0] : undefined
+      const route = only !== undefined && getSettings().has(routeKey(only)) ? only : undefined
+      return { route, ambiguousWithoutAffinity, candidates }
     },
   }
 }
@@ -410,17 +394,17 @@ function installFetchWrapper(
       return original.call(this, input, init)
     }
 
-    let decoded: DecodedBody | undefined
+    let text: string | undefined
     try {
-      decoded = await requestBody(input, init)
+      text = await requestBody(input, init)
     } catch {
       return original.call(this, input, init)
     }
-    if (decoded === undefined) return original.call(this, input, init)
+    if (text === undefined) return original.call(this, input, init)
 
     let body: unknown
     try {
-      body = JSON.parse(decoded.text)
+      body = JSON.parse(text)
     } catch {
       return original.call(this, input, init)
     }
@@ -428,8 +412,14 @@ function installFetchWrapper(
       return original.call(this, input, init)
     }
 
+    // pi-ai names the session-affinity header by format (`openai-responses.js`
+    // near `sessionAffinityFormat`): the OpenAI format sends `session_id` and
+    // `x-client-request-id`, OpenRouter's sends `x-session-id` alone. Accepting
+    // all three keeps the association working when a route uses either format;
+    // a value that matches no active request simply resolves to no route.
     const affinity = requestHeader(input, init, 'x-client-request-id')
       ?? requestHeader(input, init, 'session_id')
+      ?? requestHeader(input, init, 'x-session-id')
     const resolution = tracker.resolve(affinity, body.model)
     if (resolution.ambiguousWithoutAffinity) {
       reportAmbiguous(body.model, resolution.candidates)
@@ -517,5 +507,3 @@ export function apply(ctx: Context, config: PluginConfig): void {
     'reasoning-mode: Responses fetch wrapper',
   )
 }
-
-export { isResponsesRequest }

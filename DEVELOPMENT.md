@@ -153,11 +153,11 @@ return (async function* () {
 })()
 ```
 
-改写时用 `x-client-request-id`（回退 `session_id`）从 body 里取回会话归属，再按 `model` 过滤候选。**只在会话内过滤是不够的**：同一会话里连续两步可能换过模型，所以 model 与 sessionId 两个条件都要用。
+改写时用会话亲和头取回会话归属，再按 `model` 过滤候选。**头名按格式有两个**：pi-ai 的 `openai-responses.js` 在非 OpenRouter 格式下同时发 `session_id` 与 `x-client-request-id`，OpenRouter 格式只发 `x-session-id`（三个都接受，源码里的回退顺序如实现）。宿主确实把 `sessionId` 交给了 pi-ai（`dsh-llm-pi-ai/lib/index.js`：`...options.sessionId === void 0 ? {} : { sessionId: String(options.sessionId) }`），所以真实 DSH 流量里亲和头是**在的**——`ambiguousWithoutAffinity` 基本只会出现在没有亲和头的调用方（非 DSH 调用、或另行抑制了该头）。**只在会话内过滤是不够的**：同一会话里连续两步可能换过模型，所以 model 与 sessionId 两个条件都要用。
 
 ### 6. 歧义时不猜，并且只报一次
 
-只有在**拿不到会话归属**且同一 model 对应多个不同 provider 时才判歧义（`ambiguousWithoutAffinity`），此时跳过改写并打一条 warn。日志按 `model + 候选集合` 去重（`reportedAmbiguities`），否则每个请求刷一行。
+只有在**拿不到会话归属**且同一 model 对应多个不同 provider 时才判歧义（`ambiguousWithoutAffinity`），此时跳过改写并打一条 warn。日志按 `model + 候选集合` 去重（`reportedAmbiguities`），否则每个请求刷一行。亲和头存在但对不上任何在飞请求时，结果同样是「没有唯一候选」→不改写，但走的是**静默**分支（对不上不是身份歧义，没有可解释的内容可报）。
 
 ### 7. fetch 包装必须幂等且可还原
 
@@ -174,6 +174,8 @@ return (async function* () {
 ```
 
 `reasoning` 下的其它键（例如 adapter 设的 `effort`）原样保留；body 顶层其它键也一个不动。插件不拥有 `reasoning` 对象，只拥有其中两个字段。
+
+**也不判断模型支不支持推理**（用户实测的预期行为）：勾选了不接受 `reasoning` 的模型时，上游直接返回「不支持该参数」的报错。预筛需要在插件里复刻一份模型能力表（还要跟上目录变化），而报错本身已经精确指向那条路由——所以这里刻意不筛，把它当配置错误暴露出来。
 
 **与 DSH 自带 `reasoningEffort` 的区别（写文档时最容易混的一处）**：DSH 的 LLM 层有自己的推理档位概念——`GenerateOptions.reasoningEffort` / `LlmModelReasoningInfo`，由 adapter 声明每个模型有哪些档位（`@deepseek-ai/dsh-llm` 的 `types.d.ts`）。那是 **DSH 侧的调用参数**，由 DSH 的模型选择器与 adapter 决定怎么落到请求体里；本插件不读也不写它，只在最终 `fetch` 边界上补 Responses 的 `reasoning.mode` / `reasoning.summary`。两者会同时出现在同一个请求体里，互不覆盖（插件只改自己那两个键）。README 面向使用者时要把这条说清楚，否则「我已经有推理档位了，为什么还要这个插件」会成为第一个疑问。
 
@@ -304,8 +306,8 @@ node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(async b => { con
 
 | 文件 | 覆盖 |
 |---|---|
-| `test/index.test.mjs` | `Config.toJSON()` 里 `models` 的 volatile 标记与字段形状、`normalizeModels` 的归一化、`applyReasoningBody` 保留其它字段、`isResponsesRequest`、`resolveRouteCandidate` 的歧义规则、`apply()` 装 fetch 包装并在卸载后还原、原生 `Request` 体重建与 `content-length` 移除、并发同 model 路由的亲和选择、stream 结束后的还原、模块契约（`name`/`inject`/`apply`）、**volatile 的活性（改 `config.models` 后下一请求即生效）** |
-| `test/client.test.mjs` | `plugins.row.config` 注册（key、`whileServed` 门禁）与 `inject` 面、**输入栏控件渲染出的就是官方 `Menu`：一张平面卡片（两条 `label` + 五个选项行 + 一条 `separator`）、`selectedIds` 两项、触发器恰好三段子节点（值 / 摘要 / 箭头，无自绘分隔符）**、写入只认选项行 id（标题、分隔线、未知 id 都不写）、**在途写入时触发器换成官方 `StateDot` 并置 `aria-busy` 与 `disabled`、落定后换回箭头**、不再自实现菜单的缺席断言（无 `rm-menu*`、`rm-cell*`、`rm-option*`、`submenu`、`createPortal`、`ReactDOM`、`mousedown`、`getBoundingClientRect`）、触发器样式与官方逐 token 对齐（`font-weight:400`、`label-secondary`、`radius-sm`、`min(360px,45cqw)`、focus ring）且卡片不再自设 `overflow`、死规则与死 key（`rm-readonly`、`menuLabel`）已删、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/自绘卡片样式）、**挂载一次配置页并断言注入面被转交、且不会自带 scope**、未 ready / 无 form 时返回 `null`、**摘要视图只出一行文本且不读目录**、**暂存后一次带修订号的写入**、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
+| `test/index.test.mjs` | `Config.toJSON()` 里 `models` 的 volatile 标记与字段形状、`normalizeModels` 的归一化、`applyReasoningBody` 保留其它字段、`isResponsesRequest`、`sameModelRoutes` 的去重与「同 model 不同 provider 保持分开」（"恰好一个候选才解析出路由"由下面的端到端用例证明）、`apply()` 装 fetch 包装并在卸载后还原、原生 `Request` 体重建与 `content-length` 移除、并发同 model 路由的亲和选择、stream 结束后的还原、模块契约（`name`/`inject`/`apply`）、**volatile 的活性（改 `config.models` 后下一请求即生效）** |
+| `test/client.test.mjs` | `plugins.row.config` 注册（key、`whileServed` 门禁）与 `inject` 面、**输入栏控件渲染出的就是官方 `Menu`：一张平面卡片（两条 `label` + 五个选项行 + 一条 `separator`）、`selectedIds` 两项、触发器恰好三段子节点（值 / 摘要 / 箭头，无自绘分隔符）**、写入只认选项行 id（标题、分隔线、未知 id 都不写）、**在途写入时触发器换成官方 `StateDot` 并置 `aria-busy` 与 `disabled`、落定后换回箭头**、不再自实现菜单的缺席断言（无 `rm-menu*`、`rm-cell*`、`rm-option*`、`submenu`、`createPortal`、`ReactDOM`、`mousedown`、`getBoundingClientRect`）、触发器样式与官方逐 token 对齐（`font-weight:400`、`label-secondary`、`radius-sm`、`min(360px,45cqw)`、focus ring）且卡片不再自设 `overflow`、死规则与死 key（`rm-readonly`、`menuLabel`）已删、models-only 契约（无 `defaultMode`/`defaultSummary`/`scope.mutate`/自绘卡片样式）、**挂载一次配置页并断言注入面被转交、且不会自带 scope**、未 ready / 无 form 时返回 `null`、**摘要视图只出一行文本且不读目录**、**暂存后一次带修订号的写入**、**计数以参数交给官方翻译器（`{n}` 由官方插值，插件不再自己 `replace`；桩记录每次调用的 params）**、**新 session 使用目录默认路由、无 session 不请求目录**、样式只注入一次、缺服务时 apply 惰性、与兄弟插件 bundle 可拼接 |
 
 两条纪律：
 
@@ -358,6 +360,27 @@ foreach ($f in 'README.md','README.en.md') {
 - **成功命令也会吐像错误的 stderr**：`pnpm run typecheck` 把脚本行打到 stderr，PowerShell 会包装成 `NativeCommandError`；判据是退出码，不是这段输出。
 - **`git diff` 的 LF→CRLF 警告是正常的**，`git diff --check` 才是判空白的。
 - **profile 的 `package.json` 里塞一个解析不了的 spec 会连累所有插件的更新。** 本机 web profile 被手动加过 `"@zhourenke/dsh-reasoning-mode": "*"`（当时的目的是让插件管理器的清单显示本插件）。后果是 `pnpm update` 一律以退出码 1 失败：profile 的 `pnpm-lock.yaml` 的 importer 里**根本没有这一条**（只有 `@wxg-prc-cpg/browser-skill-dsh-plugin`、`dsh-lan-access`、`dsh-webui-mobile`），pnpm 于是必须先去 registry 解析 `*`，解析失败就在动其它依赖之前中断——所以症状是"更新**别的**插件也失败"。而依赖行并不是它可见的原因：`dsh-plugin-manager` 的 `listBundles()` 是把 `manifest.dsh.profile.bundles`、`manifest.dependencies` 与安装锚点的 `dependencies` **取并集**之后逐个解析包清单的（`lib/index.js` 的 `names = [...new Set([...selected, ...dependencies, ...Object.keys(installation.dependencies ?? {})])]`），所以本插件只要在 `dsh.profile.bundles` 里就会被列出。真要留成依赖就用不需要 registry 的 spec：`"link:C:/Users/ParkGarden/DSH_Workspace/CreatePlugin/dsh-reasoning-mode"`——profile 的 lockfile 设了 `excludeLinksFromLockfile: false`，`link:` 会被正常记录，本地目录直接生效。另外 `node_modules/@zhourenke/dsh-reasoning-mode` 是指向本仓库的 junction，这才是模块解析的落点。
+
+## 全量清理记录（冗余逻辑与死代码）
+
+按"全量检查，清理冗余逻辑和死代码"逐行过了一遍两个半边、两个测试文件、清单与 CSS。**删掉的**：
+
+| 位置 | 冗余形态 | 处置 |
+| --- | --- | --- |
+| `src/index.ts` | `distinctCandidates()` 与 `resolveRouteCandidate()` 是同一个「按 model 过滤 + 按路由键去重」的循环，而 `resolve()` 先调前者、再把**已经去重的结果**交给后者又去重一遍 | 合成一个 `sameModelRoutes()` 返回集合，「恰好一个候选才算解析出路由」在 tracker 内联为 `candidates.length === 1`，每次请求只扫一遍 |
+| `src/index.ts` | `interface DecodedBody { text: string }` 只是给字符串套了层壳（4 处 `.text`） | `decodeBody()` / `requestBody()` 直接返回 `string \| undefined`；`TextDecoder` 提到模块级复用 |
+| `src/index.ts` | `isResponsesRequest` 声明处不导出、文件末尾另写一条 `export { isResponsesRequest }`，与其余 helper 的 `export function` 不一致 | 行内 `export function`，删掉末尾那条导出语句 |
+| `src/index.ts` | `routeKey()` 带 `export` 但模块外无人消费（测试也不 import） | 去掉 `export`。导出面的判据：**只导出测试真正 import 的名字**（`normalizeModels` / `applyReasoningBody` / `isResponsesRequest` / `sameModelRoutes` 各有用例） |
+| `src/client.ts` | 组件自己再插值一遍：`String(translate(key, { n })).replace(/\{n\}/g, …)` | 删掉 `.replace`。官方翻译器本身就填占位符（`dsh-client-locale/lib/client.js`：`template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match)`），且原来那条回退分支永不触发（`selected` 是唯一带 `{n}` 的 key，调用时必带数字） |
+| `test/client.test.mjs` | 两个 React 桩都提供 `useLayoutEffect` / `useRef`，而插件只用 `useEffect` / `useMemo` / `useState` | 删掉这两个死桩：将来真用到会在测试里当场炸出来，比静默存在有用 |
+
+**查到但故意保留的**（都属于"看着像残留、其实有据"，写在这里免得下一个人再查一遍）：
+
+- `x-client-request-id` 不是自造的名字：pi-ai 的 `openai-responses.js` 在非 OpenRouter 格式下**同时**发 `session_id` 与 `x-client-request-id`。清单里补上了 OpenRouter 格式的 `x-session-id`——此前缺失，那类 provider 上亲和查找会永远落空（不是死代码，是漏了一个分支）。
+- `headerValue()` 的三个分支（`get()` / `[[k, v]]` / 普通对象）与包装器里的 `content-encoding`、`content-type`、`typeof original !== 'function'` 守卫都可达：它们守的是**全局 fetch 边界**——任何调用方都可能递 `Headers`、数组、字节体或 gzip 体，不是只服务 pi-ai。
+- `.rm-control-root` 的 `order: 1` 与 `:has()` 块里那条 `order: 1` 值相同：前者是官方 hash 类名变化后仍然生效的兜底，后者是当前构建下的整行排序。已在 CSS 注释里写明"两处都是 1，故意的"，不再是可疑重复。
+- `dsh.client.inject` 六项全部保留，逐条有消费方：`dsh-client-ui-primitives` 是 `require` 的直接依赖（官方有 7 个包同样把它列进去），`dsh-client-ui-conversation` 与 `dsh-client-ui-plugin-manager` 分别是 `conversation.input.right` 与 `plugins.row.config` 两个座位的所有者（把 `dsh-client-ui-conversation` 列进 inject 的官方包约 20 个），其余三项提供 `locale` / `configForms` / `remote` 服务。
+- 宿主半边空的 `inject: string[] = []` 保留：它是模块契约的一部分，`test/index.test.mjs` 用 `assert.deepEqual(inject, [])` 钉着。
 
 ## 与工作区其它插件的关系
 

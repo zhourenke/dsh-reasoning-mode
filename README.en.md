@@ -67,6 +67,7 @@ The configuration lives in the **web profile's patch layer**, `<harness home>/pr
 - A missing or invalid `mode` / `summary` is normalized back to `standard` / `auto` when read and never fails loading; identical `provider`+`model` duplicates are removed.
 - An entry with a mistyped id raises no error; it simply never applies (checking boxes in the configuration page avoids typos).
 - Saved routes that are absent from the catalog stay listed under "saved but currently unavailable"; manual unchecking and saving removes them.
+- The plugin **does not test whether a model supports reasoning**: checking a model that rejects `reasoning` makes the provider answer with an unsupported-parameter error (measured). That is deliberate — a loud error localises the mistake faster than a silent ignore.
 
 ## Compatibility
 

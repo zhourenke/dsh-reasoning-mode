@@ -125,9 +125,7 @@ function makeRequire(options = {}) {
       return element
     },
     useEffect: () => {},
-    useLayoutEffect: () => {},
     useMemo: (fn) => fn(),
-    useRef: () => ({ current: null }),
     // React invokes a function initial state lazily; the page relies on it to
     // copy the accepted selection out of the Host form.
     useState: (value) => [typeof value === 'function' ? value() : value, () => {}],
@@ -154,7 +152,7 @@ function readyValue(value = { models: [] }, revision = 1) {
  * values of the default one.
  */
 function makeCtx(options = {}) {
-  const state = { injected: [], registered: [], locales: [], effects: 0, served: [], read: [] }
+  const state = { injected: [], registered: [], locales: [], effects: 0, served: [], read: [], translations: [] }
   const writes = []
   const sets = []
   const form = options.form ?? {
@@ -176,7 +174,15 @@ function makeCtx(options = {}) {
   // `dsh-client-ui-renderer/lib/client.js`). So the harness supplies it here and
   // the plugin must never bind its own translator.
   const localeFace = {
-    bind: (namespace) => (key) => `${namespace}:${key}`,
+    // The official translator fills the template's `{name}` placeholders from
+    // the params object (`dsh-client-locale/lib/client.js`:
+    // `template.replace(/\{(\w+)\}/g, …)`). The harness echoes the key so that
+    // assertions read `namespace:key`, and records every call so a test can
+    // prove a parameter was passed rather than patched into the result here.
+    bind: (namespace) => (key, params) => {
+      state.translations.push({ key, params })
+      return `${namespace}:${key}`
+    },
     register(namespace, dictionaries) {
       state.locales.push({ namespace, dictionaries })
       return () => {}
@@ -248,15 +254,9 @@ function makeHookRunner() {
       return element
     },
     useEffect: schedule,
-    useLayoutEffect: schedule,
     useMemo: (fn) => {
       hookIndex += 1
       return fn()
-    },
-    useRef: (initial) => {
-      const index = hookIndex++
-      if (state[index] === undefined) state[index] = { current: initial }
-      return state[index]
     },
     useState: (initial) => {
       const index = hookIndex++
@@ -613,6 +613,11 @@ test('stages the route list and commits it with one revision-fenced write', asyn
   assert.equal(shell.props.state.dirty, true)
   assert.equal(shell.props.state.writable, true)
   assert.equal(shell.props.labels.save, 'reasoning-mode:save')
+
+  // The count reaches the translator as a parameter; the plugin does not patch
+  // `{n}` into the returned string itself.
+  const countCall = state.translations.filter((call) => call.key === 'selected').pop()
+  assert.deepEqual(countCall?.params, { n: 1 })
 
   shell.props.onSave()
   await settle()
