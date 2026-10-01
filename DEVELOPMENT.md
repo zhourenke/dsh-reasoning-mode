@@ -335,16 +335,27 @@ pnpm pack --dry-run
 - **`files` 只列不会被自动包含的产物**：`lib/index.js`、`lib/client.js`、`lib/types/**/*.d.ts`、`cordis.patch.yml`、`icon.svg`、`locale/*.json`。`README.md`、`README.en.md`、`package.json`、`LICENSE` 与 `main` 指向的文件属于自动包含集，列进去是空操作条目；**`icon.svg` 与 `locale/*.json` 恰恰不在自动包含集里**，漏掉它们插件列表就只剩一个名字（见 §18）。`DEVELOPMENT.md` **两边都不沾**（既不被 `files` 匹配，也不在自动包含集），所以它只留在仓库里，不进安装载荷——README 里因此不要链接它（对载荷读者是死链）。
 - **改了 README 就要同步另一份，并做结构对账**：`README.md`（中文）与 `README.en.md`（英文）的章节数、表格数与表头列数必须 1:1，命令里的包名与路径逐字一致；再扫一遍兄弟插件的专有名词（`<summary>` 标签、`reasoning-summary`、注入上下文提示等），它们会在照搬结构时被一起搬进来。
 
+**注意：只数 `^\|` 行数的对账挡不住表格损坏。** 配置表曾经两份都写成 `|---|---|---|:---:|---|`（对齐行 5 列、表头 4 列，GFM 要求两者同列数，否则整张表不成立），而"两份行数相等"照样通过——**两边一起错的对账等于没对账**。所以下面这段同时检查表格完整性：对齐行必须与表头同列数，且每个 `|` 块的第一行必须是对齐行（防"空行把一张表切成两段"）。
+
 ```powershell
-# 结构对账：两份的 h2 数、表格行数、代码围栏数必须相等
+# 结构对账 + 表格完整性：h2 数 / 表格行数 / 围栏数必须相等，
+# 且每张表的对齐行必须与表头同列数、每个 | 块必须以对齐行开头
+function Cells([string]$line) { $t = $line -replace '\\\|','#'; return (($t -split '\|').Count - 2) }
 foreach ($f in 'README.md','README.en.md') {
   $l = Get-Content $f -Encoding utf8
   "{0,-16} h2={1} table-rows={2} fences={3}" -f $f,
     @($l | Where-Object { $_ -match '^## ' }).Count,
     @($l | Where-Object { $_ -match '^\|' }).Count,
     @($l | Where-Object { $_ -match '^```' }).Count
+  for ($i = 0; $i -lt $l.Count; $i++) {
+    if ($l[$i] -match '^\|' -and ($i -eq 0 -or $l[$i-1] -notmatch '^\|')) {
+      if ($l[$i+1] -notmatch '^\|[\s:\-|]+\|\s*$') { throw "$f line $($i+1): 表格块没有对齐行（空行切断了表？）" }
+      if ((Cells $l[$i]) -ne (Cells $l[$i+1])) { throw "$f line $($i+1): 对齐行 $(Cells $l[$i+1]) 列 vs 表头 $(Cells $l[$i]) 列" }
+    }
+  }
 }
 ```
+（`Cells` 先把转义竖线 `\|` 换成占位符再数，否则 `standard \| pro` 这种单元格会被多算一列。）
 - **载荷断言要看全部行**，不要按前缀过滤（`README.md`、`package.json`、`LICENSE` 与 `lib/` 不共享前缀，过滤会把判断「多一个」的依据滤掉）。
 - **产物与源码同一个提交**；只改 `src/` 不提交 `lib/` 会让从 git 安装的人跑到旧代码。
 - 提交信息用 `-F <文件>` 写（本环境 `git commit -m` 里的反斜杠、引号、`$` 会被 PowerShell 改写）。

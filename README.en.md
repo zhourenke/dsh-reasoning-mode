@@ -56,7 +56,7 @@ The configuration lives in the **web profile's patch layer**, `<harness home>/pr
 ```
 
 | Field | Type | Default | Meaning |
-|---|---|---|:---:|---|
+|---|---|:---:|---|
 | `models` | array | `[]` | Routes to rewrite; each item is `{ provider, model, mode, summary }`. **An empty list is the only off switch**. |
 | `models[].provider` | string | none | Provider id, character-for-character identical to the catalog. |
 | `models[].model` | string | none | Model id, likewise exact. |

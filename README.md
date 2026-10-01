@@ -56,7 +56,7 @@ dsh plugin --profile web remove @zhourenke/dsh-reasoning-mode
 ```
 
 | 字段 | 类型 | 默认 | 说明 |
-|---|---|---|:---:|---|
+|---|---|:---:|---|
 | `models` | array | `[]` | 要改写的路由列表，每项为 `{ provider, model, mode, summary }`。**空列表是唯一的关闭状态**。 |
 | `models[].provider` | string | 无 | provider id，必须与目录里的 id 逐字一致。 |
 | `models[].model` | string | 无 | model id，同样逐字一致。 |
