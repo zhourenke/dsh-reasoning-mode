@@ -384,7 +384,7 @@ foreach ($f in 'README.md','README.en.md') {
 （`Cells` 先把转义竖线 `\|` 换成占位符再数，否则 `standard \| pro` 这种单元格会被多算一列。）
 - **载荷断言要看全部行**，不要按前缀过滤（`README.md`、`package.json`、`LICENSE` 与 `lib/` 不共享前缀，过滤会把判断「多一个」的依据滤掉）。
 - **产物与源码同一个提交**；只改 `src/` 不提交 `lib/` 会让从 git 安装的人跑到旧代码。
-- 提交信息用 `-F <文件>` 写（本环境 `git commit -m` 里的反斜杠、引号、`$` 会被 PowerShell 改写）。
+- 提交信息用 `-F <文件>` 写。**理由已随换版收窄**：pwsh 7.6.6 实测反斜杠与引号能**原样**到达原生程序（`'say "hi there" end'`、`'trailing C:\dir\'` 逐字保留），5.1 那种"剥掉引号、吃掉反斜杠"的改写不复现；**仍然会被解释的是 `$`**——双引号里 PowerShell 照样插值（`"home is $user\path"` 展开成 `home is ParkGarden\path`），而提交信息本就是多行长文本。写成信息文件让 git 自己读，就从根上避开了这一整类问题（也让正文能自由使用反斜杠、引号与代码片段）。
 
 ## 已知陷阱（本仓库踩过的）
 
@@ -393,8 +393,9 @@ foreach ($f in 'README.md','README.en.md') {
 - **正则做「旧字段残留」扫描时要加词边界**：`/draftMode/` 会命中 `draftModels`，把正确的代码判成残留。当前用的是 `\bdefaultMode\b|…|\bdraftMode\b|…`。
 - **`pnpm pack --dry-run --json` 退出 1 且没有输出**（pnpm 的 `pack` 不认 `--json`）；要机器可读结果用 `npm pack --dry-run --json`，两者对同一份 `files` 点出的文件集相同。
 - **`npm pack` 认 cwd 不认 `--prefix`**：检查另一个目录要先 `Push-Location` 过去。
-- **本环境的 PowerShell 是 5.1**：没有 `&&`、三元、`??`；`Get-Content` 对无 BOM 的 UTF-8 默认按 ANSI 解码（连行数都会少），读文件一律带 `-Encoding utf8`；`Set-Content -Encoding UTF8` 在本环境**会写入 BOM**，需要无 BOM 的 UTF-8 时用 `[System.IO.File]::WriteAllText`。
-- **成功命令也会吐像错误的 stderr**：`pnpm run typecheck` 把脚本行打到 stderr，PowerShell 会包装成 `NativeCommandError`；判据是退出码，不是这段输出。
+- **本环境的 shell 已是 pwsh 7.6.6（`Core`），不再是 Windows PowerShell 5.1。** 原先这一条写下的三个"5.1 限制"**已随换版全部作废**（本节结论实测于 2026-10-13，pwsh 7.6.6 = `…\scoop\apps\pwsh\current\pwsh.exe`）：`&&`/`||`、三元 `? :`、`??` 都能用；`Get-Content` **不带 `-Encoding`** 也能正确读无 BOM 的 UTF-8（3 行中文文件读到 3 行、首行原样）；`Set-Content -Encoding utf8` 写的是**无 BOM**（首字节 `230,142,168`），要 BOM 得显式 `-Encoding utf8BOM`（`utf8NoBOM` 也认）。**动手前先跑 `$PSVersionTable.PSVersion` 自证**（期望 `7.6.6` / `Core`）：这一条的错法不是"命令写错了"，而是**把环境实测当成了环境常量**——shell 来自 scoop 的 `current` 连接，一次 `scoop update pwsh` 就能让上面每个数字变旧，而照旧写法**不报错**，只会让人按已经不存在的约束绕远路、并用错量具读数。（5.1 仍在本机 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`，显式调用它时那些限制原样成立——所以结论要连版本一起写。）本文档里的命令**不需要为换版改写**：它们只用两个版本都支持的写法（`-Encoding utf8` 正是其中之一），作废的是**结论**而不是命令。
+- **与版本无关、仍然要守的**：读可能含非 ASCII 的文件**仍推荐显式 `-Encoding utf8`**（不是必需，而是不依赖"会变的环境默认值"）；`[System.IO.File]::WriteAllText` 仍是**逐字节精确**的写法——`Set-Content` 会在末尾**追加一个 CRLF**（实测 `"A<LF>B"` 得 `65,10,66,13,10`，`WriteAllText` 得 `65,10,66`），数组输入还会按行拼接；二进制不要过"原生→原生"管道；`$host` 一类只读自动变量别复用作循环变量；要读 `$LASTEXITCODE` 就别把命令接进 `Select-Object -First N`。
+- **成功命令也会吐像错误的 stderr，而"它会不会变成错误记录"取决于你怎么收它**：`pnpm run typecheck` 把脚本行打到 stderr。**直接跑**时不产生任何错误记录（实测退出码 `0`、`$Error.Count` 为 `0`，只有一行正常的 `$ tsc …`）；但**一旦用 `2>&1` 收进变量**，每个 stderr 行都会被包成 `ErrorRecord`（`FullyQualifiedErrorId` 仍是 `NativeCommandError`，异常类型却是 `RemoteException`——5.1 那个**同名类型**已经不存在了）。所以判据始终是退出码，不是这段输出；要给输出加过滤就先存进变量、再读码。
 - **`git diff` 的 LF→CRLF 警告是正常的**，`git diff --check` 才是判空白的。
 - **profile 的 `package.json` 里塞一个解析不了的 spec 会连累所有插件的更新。** 本机 web profile 被手动加过 `"@zhourenke/dsh-reasoning-mode": "*"`（当时的目的是让插件管理器的清单显示本插件）。后果是 `pnpm update` 一律以退出码 1 失败：profile 的 `pnpm-lock.yaml` 的 importer 里**根本没有这一条**（只有 `@wxg-prc-cpg/browser-skill-dsh-plugin`、`dsh-lan-access`、`dsh-webui-mobile`），pnpm 于是必须先去 registry 解析 `*`，解析失败就在动其它依赖之前中断——所以症状是"更新**别的**插件也失败"。而依赖行并不是它可见的原因：`dsh-plugin-manager` 的 `listBundles()` 是把 `manifest.dsh.profile.bundles`、`manifest.dependencies` 与安装锚点的 `dependencies` **取并集**之后逐个解析包清单的（`lib/index.js` 的 `names = [...new Set([...selected, ...dependencies, ...Object.keys(installation.dependencies ?? {})])]`），所以本插件只要在 `dsh.profile.bundles` 里就会被列出。真要留成依赖就用不需要 registry 的 spec：`"link:C:/Users/ParkGarden/DSH_Workspace/CreatePlugin/dsh-reasoning-mode"`——profile 的 lockfile 设了 `excludeLinksFromLockfile: false`，`link:` 会被正常记录，本地目录直接生效。另外 `node_modules/@zhourenke/dsh-reasoning-mode` 是指向本仓库的 junction，这才是模块解析的落点。
 
@@ -419,7 +420,6 @@ foreach ($f in 'README.md','README.en.md') {
 - **`x-client-request-id` 不是自造的名字**：pi-ai 的 `openai-responses.js` 在非 OpenRouter 格式下**同时**发 `session_id` 与 `x-client-request-id`。清单里补上了 OpenRouter 格式的 `x-session-id`——此前缺失，那类 provider 上亲和查找会永远落空（不是死代码，是漏了一个分支）。
 - **`isResponsesRequest` 的 catch 分支接受相对 URL，这是有意的**：`new URL()` 解析不了相对路径，于是回退成对**原始字符串**做同一个 `/responses` 后缀判定——所以 `/v1/responses` 一样会被改写。写测试时我原先按直觉把它当成"应当原样转发"，结果被测试当场纠正（用例失败、打印出的 init 里已经多了 `reasoning`）。**这类"我以为它在守、其实它放行"的分支，只有把请求真的发一遍才会露出来。**
 - `headerValue()` 的三个分支（`get()` / `[[k, v]]` / 普通对象）与包装器里的 `content-encoding`、`content-type`、`typeof original !== 'function'` 守卫都可达：它们守的是**全局 fetch 边界**——任何调用方都可能递 `Headers`、数组、字节体或 gzip 体，不是只服务 pi-ai。
-- `headerValue()` 的三个分支（`get()` / `[[k, v]]` / 普通对象）与包装器里的 `content-encoding`、`content-type`、`typeof original !== 'function'` 守卫都可达：它们守的是**全局 fetch 边界**——任何调用方都可能递 `Headers`、数组、字节体或 gzip 体，不是只服务 pi-ai。
 - `.rm-control-root` 的 `order: 1` 与 `:has()` 块里那条 `order: 1` 值相同：前者是官方 hash 类名变化后仍然生效的兜底，后者是当前构建下的整行排序。已在 CSS 注释里写明"两处都是 1，故意的"，不再是可疑重复。
 - `dsh.client.inject` 六项全部保留，逐条有消费方：`dsh-client-ui-primitives` 是 `require` 的直接依赖（官方有 7 个包同样把它列进去），`dsh-client-ui-conversation` 与 `dsh-client-ui-plugin-manager` 分别是 `conversation.input.right` 与 `plugins.row.config` 两个座位的所有者（把 `dsh-client-ui-conversation` 列进 inject 的官方包约 20 个），其余三项提供 `locale` / `configForms` / `remote` 服务。
 - 宿主半边空的 `inject: string[] = []` 保留：它是模块契约的一部分，`test/index.test.mjs` 用 `assert.deepEqual(inject, [])` 钉着。
@@ -441,7 +441,7 @@ foreach ($f in 'README.md','README.en.md') {
 | `@deepseek-ai/dsh-client-ui-plugin-manager`、`…-ui-settings` | 配置页槽契约与 `ConfigPageForm` 的**类型出处**（浏览器半边是 `any`，靠人工对照 `.d.ts`） | `devDependencies` |
 | `typescript`、`@types/node` | 工具链 | `devDependencies` |
 
-宿主包在 `devDependencies` 里**钉死到 `0.2.0-rc.2`**（`cordis` 钉 `4.0.4`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围会让人对着与线上不同的宿主做类型检查与测试。`dsh-llm` 这条尤其不能省——宿主半边有一句 `import type {} from '@deepseek-ai/dsh-llm'`，它取的是该包声明的事件表（`llm/stream`），版本旧了就会对着退役的事件签名做类型检查。`schemastery` 用 `~3.18.4`（官方插件的写法）：**它对运行时有实质影响**——`3.18.2` 没有 `.volatile()`，插件会在 `apply` 时抛 `TypeError`，而宿主与 loader 用的是 `3.18.4`。基线版本：**DSH v0.2.0-rc.2**，Node 25.8.1，pnpm 11.21.0。
+宿主包在 `devDependencies` 里**钉死到 `0.2.0-rc.2`**（`cordis` 钉 `4.0.4`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围会让人对着与线上不同的宿主做类型检查与测试。`dsh-llm` 这条尤其不能省——宿主半边有一句 `import type {} from '@deepseek-ai/dsh-llm'`，它取的是该包声明的事件表（`llm/stream`），版本旧了就会对着退役的事件签名做类型检查。`schemastery` 用 `~3.18.4`（官方插件的写法）：**它对运行时有实质影响**——`3.18.2` 没有 `.volatile()`，插件会在 `apply` 时抛 `TypeError`，而宿主与 loader 用的是 `3.18.4`。基线版本：**DSH v0.2.0-rc.2**，Node 25.8.1，pnpm 11.21.0，shell 为 pwsh **7.6.6**（`Core`；结论以 `$PSVersionTable` 自证为准，见「已知陷阱」）。
 
 ## 兼容性与准入闸门
 
