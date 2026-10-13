@@ -393,10 +393,10 @@ foreach ($f in 'README.md','README.en.md') {
 - **正则做「旧字段残留」扫描时要加词边界**：`/draftMode/` 会命中 `draftModels`，把正确的代码判成残留。当前用的是 `\bdefaultMode\b|…|\bdraftMode\b|…`。
 - **`pnpm pack --dry-run --json` 退出 1 且没有输出**（pnpm 的 `pack` 不认 `--json`）；要机器可读结果用 `npm pack --dry-run --json`，两者对同一份 `files` 点出的文件集相同。
 - **`npm pack` 认 cwd 不认 `--prefix`**：检查另一个目录要先 `Push-Location` 过去。
-- **本环境的 shell 已是 pwsh 7.6.6（`Core`），不再是 Windows PowerShell 5.1。** 原先这一条写下的三个"5.1 限制"**已随换版全部作废**（本节结论实测于 2026-10-13，pwsh 7.6.6 = `…\scoop\apps\pwsh\current\pwsh.exe`）：`&&`/`||`、三元 `? :`、`??` 都能用；`Get-Content` **不带 `-Encoding`** 也能正确读无 BOM 的 UTF-8（3 行中文文件读到 3 行、首行原样）；`Set-Content -Encoding utf8` 写的是**无 BOM**（首字节 `230,142,168`），要 BOM 得显式 `-Encoding utf8BOM`（`utf8NoBOM` 也认）。**动手前先跑 `$PSVersionTable.PSVersion` 自证**（期望 `7.6.6` / `Core`）：这一条的错法不是"命令写错了"，而是**把环境实测当成了环境常量**——shell 来自 scoop 的 `current` 连接，一次 `scoop update pwsh` 就能让上面每个数字变旧，而照旧写法**不报错**，只会让人按已经不存在的约束绕远路、并用错量具读数。（5.1 仍在本机 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`，显式调用它时那些限制原样成立——所以结论要连版本一起写。）本文档里的命令**不需要为换版改写**：它们只用两个版本都支持的写法（`-Encoding utf8` 正是其中之一），作废的是**结论**而不是命令。
+- **本环境的 shell 已是 pwsh 7.6.6（`Core`），不再是 Windows PowerShell 5.1；动手前先跑 `$PSVersionTable.PSVersion` 自证。** 原先记在这条里的那几个"5.1 限制"已随换版作废，而 5.1 仍在本机（`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`），显式调用它时原样成立。**现基线该用哪些写法、逐条实测与出处，看工作区 `PLUGIN_RELEASE_GUIDE.md`「本环境的 PowerShell 版本基线」**——本文档不再复述那些数字；本文档里的命令两个版本都能跑，不需要为换版改写。
 - **与版本无关、仍然要守的**：读可能含非 ASCII 的文件**仍推荐显式 `-Encoding utf8`**（不是必需，而是不依赖"会变的环境默认值"）；`[System.IO.File]::WriteAllText` 仍是**逐字节精确**的写法——`Set-Content` 会在末尾**追加一个 CRLF**（实测 `"A<LF>B"` 得 `65,10,66,13,10`，`WriteAllText` 得 `65,10,66`），数组输入还会按行拼接；`$host` 一类只读自动变量别复用作循环变量；要读 `$LASTEXITCODE` 就别把命令接进 `Select-Object -First N`。
-- **换版后翻案的一条：二进制过"原生→原生"管道，5.1 必然损坏、7.6.6 实测逐字节保真。** 同一条 `git archive --format=tar HEAD | tar -tf -`：5.1 报 `Unrecognized archive format`、下游只拿到 286019 字节（归档 317440），7.6.6 下一个字节不少。**这条以前被写进上一行的"与版本无关"里，是错的**；要同时支持两个 shell 的动作（尤其物化跟踪文件）仍走中间文件——`git archive -o` 再解。
-- **成功命令也会吐像错误的 stderr，而"它会不会变成错误记录"取决于你怎么收它**：`pnpm run typecheck` 把脚本行打到 stderr。**直接跑**时不产生错误记录（实测退出码 `0`、`$Error.Count` 为 `0`，只有一行正常的 `$ tsc …`）；但**一旦用 `2>&1` 收进变量**，那一行就是**一个 `ErrorRecord`**（`FullyQualifiedErrorId` 仍是 `NativeCommandError`，异常类型是 `RemoteException`——**两个 shell 都一样**，而且**不是 pnpm 专有**：裸 `node -e "console.error('x')"` 同样如此；差别只在 5.1 会把它计入 `$Error`、7.6.6 不进）。所以判据始终是退出码，不是这段输出；**也别拿 `$Error.Count` 当"没产生错误记录"的判据**；要给输出加过滤就先存进变量、再读码。
+- **换版后翻案的一条：二进制过"原生→原生"管道，5.1 必然损坏、7.6.6 实测逐字节保真。** 同一条 `git archive --format=tar HEAD | tar -tf -`：5.1 报 `Unrecognized archive format`、下游只拿到 286019 字节（归档 317440），7.6.6 下一个字节不少。**这条曾被写进"与版本无关"那一组里，是错的**；要同时支持两个 shell 的动作（尤其物化跟踪文件）仍走中间文件——`git archive -o` 再解。
+- **成功命令也会吐像错误的 stderr，判据只能是退出码——"有没有红字"和 `$Error.Count` 都不是判据。** `pnpm run typecheck` 把脚本行（`$ tsc --noEmit …`）打到 stderr，它前面那行 `$ <script>` 是 pnpm 自己回显的命令。**同一个现象在两个 shell 下的形态不同**（会不会渲染成红色错误记录、`2>&1` 收进变量拿到的是什么），逐条实测见工作区 `PLUGIN_RELEASE_GUIDE.md`「成功的命令也会吐出像错误的 stderr」。
 - **`git diff` 的 LF→CRLF 警告是正常的**，`git diff --check` 才是判空白的。
 - **profile 的 `package.json` 里塞一个解析不了的 spec 会连累所有插件的更新。** 本机 web profile 被手动加过 `"@zhourenke/dsh-reasoning-mode": "*"`（当时的目的是让插件管理器的清单显示本插件）。后果是 `pnpm update` 一律以退出码 1 失败：profile 的 `pnpm-lock.yaml` 的 importer 里**根本没有这一条**（只有 `@wxg-prc-cpg/browser-skill-dsh-plugin`、`dsh-lan-access`、`dsh-webui-mobile`），pnpm 于是必须先去 registry 解析 `*`，解析失败就在动其它依赖之前中断——所以症状是"更新**别的**插件也失败"。而依赖行并不是它可见的原因：`dsh-plugin-manager` 的 `listBundles()` 是把 `manifest.dsh.profile.bundles`、`manifest.dependencies` 与安装锚点的 `dependencies` **取并集**之后逐个解析包清单的（`lib/index.js` 的 `names = [...new Set([...selected, ...dependencies, ...Object.keys(installation.dependencies ?? {})])]`），所以本插件只要在 `dsh.profile.bundles` 里就会被列出。真要留成依赖就用不需要 registry 的 spec：`"link:<本仓库的绝对路径，正斜杠>"`（例如 `"link:C:/Users/<用户名>/DSH_Workspace/CreatePlugin/dsh-reasoning-mode"`）——profile 的 lockfile 设了 `excludeLinksFromLockfile: false`，`link:` 会被正常记录，本地目录直接生效。另外 `node_modules/@zhourenke/dsh-reasoning-mode` 是指向本仓库的 junction，这才是模块解析的落点。
 
@@ -465,7 +465,7 @@ peer dsh-llm = ^0.2.0-rc.2 -> 兼容
 
 ## DSH 0.2.0-rc.2 复核记录（设置 / UI 域）
 
-按工作区 `PLUGIN_RELEASE_GUIDE.md` 第 7 节那份 14 步清单逐条跑过（0.1.7-rc.2 → 0.2.0-rc.2）。**结论：只有 peer 范围一处要改，代码与契约一处没坏。** 逐条证据：
+按工作区 `PLUGIN_RELEASE_GUIDE.md`「DSH 升级后的复核」那份清单逐条跑过（0.1.7-rc.2 → 0.2.0-rc.2）。**结论：只有 peer 范围一处要改，代码与契约一处没坏。** 逐条证据：
 
 **未变（重跑即可确认）**
 
