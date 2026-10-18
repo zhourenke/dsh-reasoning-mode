@@ -800,3 +800,35 @@ test('the display metadata the plugin list shows is declared and valid', () => {
     assert.ok(dict.meta.description.length > 0, `${file} description is not empty`)
   }
 })
+
+test('peerDependencies and README compatibility declarations stay in step across host baselines', () => {
+  // All @deepseek-ai/dsh-* peerDependencies must declare the exact same range of host baselines
+  const dshPeers = Object.entries(manifest.peerDependencies ?? {})
+    .filter(([pkgName]) => pkgName.startsWith('@deepseek-ai/dsh-'))
+  assert.ok(dshPeers.length > 0, 'must declare dsh-* peerDependencies')
+
+  const expectedRange = dshPeers[0][1]
+  for (const [pkgName, range] of dshPeers) {
+    assert.equal(range, expectedRange, `${pkgName} peer range must match other dsh-* packages`)
+  }
+
+  // Extract version tokens from the peer range, e.g. "^0.2.0-rc.2 || ^0.2.1-rc.2" -> ['0.2.0-rc.2', '0.2.1-rc.2']
+  const peerVersions = expectedRange
+    .split('||')
+    .map((arm) => arm.trim().replace(/^\^/, ''))
+    .sort()
+
+  // Verify README.md compatibility section has exactly one matching line per peer baseline
+  const readmeZh = readFileSync(new URL('README.md', packageRoot), 'utf8')
+  const zhMatches = [...readmeZh.matchAll(/在 v([0-9a-zA-Z.-]+)（\d{4}-\d{2}）下测试通过。/g)]
+    .map((m) => m[1])
+    .sort()
+  assert.deepEqual(zhMatches, peerVersions, 'README.md compatibility lines must match peerDependencies baselines')
+
+  // Verify README.en.md compatibility section matches as well
+  const readmeEn = readFileSync(new URL('README.en.md', packageRoot), 'utf8')
+  const enMatches = [...readmeEn.matchAll(/Tested with v([0-9a-zA-Z.-]+) \([A-Za-z]+ \d{4}\)\./g)]
+    .map((m) => m[1])
+    .sort()
+  assert.deepEqual(enMatches, peerVersions, 'README.en.md compatibility lines must match peerDependencies baselines')
+})
