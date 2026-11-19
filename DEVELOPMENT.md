@@ -18,7 +18,7 @@ README 是刻意精简的：上述四类内容曾经在 README 里，按要求�
 | `lib/client.js` | 浏览器编译产物，**必须提交** |
 | `lib/types/index.d.ts` | 宿主类型声明，**必须提交** |
 | `lib/types/client.d.ts` | 浏览器类型声明，**必须提交** |
-| `test/index.test.mjs` | 宿主半边（18 项）：schema 归一化、请求改写、路由解析、fetch 包装与还原、**边界守卫与错误分支（不属于本插件的请求逐字节转交且有正向对照、畸形/敌意请求不许把调用方拖死、在飞但未配置的路由不改写）**、模块契约、清单契约（显示元数据）、**宿主双基线 peerDependencies 与 README 兼容行一致性** |
+| `test/index.test.mjs` | 宿主半边（19 项）：schema 归一化、请求改写、路由解析、fetch 包装与还原、**边界守卫与错误分支（不属于本插件的请求逐字节转交且有正向对照、畸形/敌意请求不许把调用方拖死、在飞但未配置的路由不改写）**、模块契约、清单契约（显示元数据）、**peerDependencies 与 README 兼容行一致性**、**`dsh.client.inject` 只列真正可注入的 client entry（外壳内置模块不得列入）** |
 | `test/client.test.mjs` | 浏览器半边（22 项）：**真正执行** `lib/client.js`，含配置页挂载、摘要视图、带修订号的写入、**被拒绝的写入 / 抛错的写入 / 放弃修改**、**目录里已消失的已保存路由（「不可用」分组与两种行体）**、**目录加载失败与重试**、未 ready / 无 form 分支、session 默认模型 fallback、**目录不可达时控件隐藏与在飞请求取消**、无 session 分支 |
 | `cordis.patch.yml` | profile 层插入声明（`- insert:` 形式） |
 | `icon.svg` | 插件列表的图标：顶层 `icon` 指向它，宿主直接读成内联 data URL（不经过代码） |
@@ -322,7 +322,7 @@ node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(async b => { con
 pnpm run coverage      # = build + node --test --experimental-test-coverage
 ```
 
-第一次测量（清理前，27 项）：`index.js` 行 89.10% / 分支 81.71%，`client.js` 行 95.95% / 分支 71.35%。**未执行的行没有一行是"构造上不可达"，全部是"可达但没测"**——于是按指南的规则补测试而不是删代码，补完（39 项）：
+第一次测量（清理前，27 项）：`index.js` 行 89.10% / 分支 81.71%，`client.js` 行 95.95% / 分支 71.35%。**未执行的行没有一行是"构造上不可达"，全部是"可达但没测"**——于是按指南的规则补测试而不是删代码，补完（39 项，现为 41 项）：
 
 | 文件 | 行 | 分支 | 函数 | 补测的分支 |
 | --- | --- | --- | --- | --- |
@@ -435,14 +435,14 @@ foreach ($f in 'README.md','README.en.md') {
 
 | 包 | 角色 | 声明位置 |
 |---|---|---|
-| `@deepseek-ai/schemastery` | 唯一被真正 import 的值依赖（`z`，含 `.volatile()`） | `dependencies`（`~3.18.4`） |
+| `@deepseek-ai/schemastery` | 唯一被真正 import 的值依赖（`z`，含 `.volatile()`） | `dependencies`（`~3.19.0`） |
 | `@deepseek-ai/cordis` | 上下文与插件框架（`Context` / `Volatile` 类型） | `peerDependencies`（optional） |
-| `@deepseek-ai/dsh-llm` | `llm/stream` 事件名增强 | `peerDependencies`（`^0.2.0-rc.2 \|\| ^0.2.1-rc.2`） |
-| `@deepseek-ai/dsh-client-ui-primitives` | 浏览器半边 `require()` 的唯一官方包（图标 + `Menu` + `SettingsForm`） | `devDependencies` |
+| `@deepseek-ai/dsh-llm` | `llm/stream` 事件名增强 | `peerDependencies`（`^0.2.2-rc.5`，单臂） |
+| `@deepseek-ai/dsh-client-ui-primitives` | 浏览器半边 `require()` 的唯一官方包（图标 + `Menu` + `SettingsForm`）。**0.2.2 起它是 Web 外壳的内置模块，不是可注入的 client entry**，所以只在 `devDependencies` 里留着取 `.d.ts`，不进 `dsh.client.inject` | `devDependencies` |
 | `@deepseek-ai/dsh-client-ui-plugin-manager`、`…-ui-settings` | 配置页槽契约与 `ConfigPageForm` 的**类型出处**（浏览器半边是 `any`，靠人工对照 `.d.ts`） | `devDependencies` |
 | `typescript`、`@types/node` | 工具链 | `devDependencies` |
 
-宿主包在 `devDependencies` 里**钉死到 `0.2.0-rc.2`**（`cordis` 钉 `4.0.4`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围会让人对着与线上不同的宿主做类型检查与测试。`dsh-llm` 这条尤其不能省——宿主半边有一句 `import type {} from '@deepseek-ai/dsh-llm'`，它取的是该包声明的事件表（`llm/stream`），版本旧了就会对着退役的事件签名做类型检查。`schemastery` 用 `~3.18.4`（官方插件的写法）：**它对运行时有实质影响**——`3.18.2` 没有 `.volatile()`，插件会在 `apply` 时抛 `TypeError`，而宿主与 loader 用的是 `3.18.4`。已测试版本：**DSH v0.2.0-rc.2**（2026-09）与 **v0.2.1-rc.2**（2026-10），双轨支持。Node 25.8.1，pnpm 11.21.0，shell 为 pwsh **7.6.6**（`Core`；结论以 `$PSVersionTable` 自证为准，见「已知陷阱」）。
+宿主包在 `devDependencies` 里**钉死到 `0.2.2-rc.5`**（`cordis` 钉 `4.1.0`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围会让人对着与线上不同的宿主做类型检查与测试。`dsh-llm` 这条尤其不能省——宿主半边有一句 `import type {} from '@deepseek-ai/dsh-llm'`，它取的是该包声明的事件表（`llm/stream`），版本旧了就会对着退役的事件签名做类型检查。`schemastery` 用 `~3.19.0`（官方插件的写法，与 0.2.2-rc.5 宿主一致）：**它对运行时有实质影响**——`3.18.2` 没有 `.volatile()`，插件会在 `apply` 时抛 `TypeError`，而宿主与 loader 用的是 `3.19.0`。已测试版本：**DSH v0.2.2-rc.5**（2026-11），单基线；0.2.0-rc.2 与 0.2.1-rc.2 两条历史基线随 peer 收窄一并退役。Node 25.8.1，pnpm 11.21.0，shell 为 pwsh **7.6.6**（`Core`；结论以 `$PSVersionTable` 自证为准，见「已知陷阱」）。
 
 ## 兼容性与准入闸门
 
@@ -504,27 +504,30 @@ peer dsh-llm = ^0.2.0-rc.2 -> 兼容
 
 这三条任何一条变了（例如宿主开始传自己的 `fetch`，或 pi-ai 改成模块级捕获、或换库），症状都是**静默失效**——请求照发、只是 `reasoning` 字段没被改写，没有任何报错。Dsh 也没有提供请求改写缝隙：`dsh-llm` 的服务面只有 `registerAdapter` / `listModels` / `resolveModelInfo` / `resolveCallConfig` / `prepareCall` / `stream` 等，waterfall 事件只有 `llm/stream`、`tools/*`、`internal/*` 与 `llm/adapters-updated`。**升级后要按上面三条重新验证一次**，这是本插件最脆的一环。
 
-## DSH 0.2.1-rc.2 复核与双轨基线支持记录
+## DSH 0.2.2-rc.5 复核记录（单基线）
 
-按工作区指南 §2.11「多宿主代支持窗口」原则，本插件在 0.2.0 下界元组上维护 **0.2.0-rc.2** 与 **0.2.1-rc.2** 双轨宿主基线：
+按工作区指南 §2.11 与宿主版本节奏，本插件**收敛到 `0.2.2-rc.5` 单基线**：`0.2.0-rc.2` 与 `0.2.1-rc.2` 两条历史基线随 peer 收窄一并退役，版本号随之跳到 `0.2.2-rc.5.1`（`<宿主版本>.<补丁号>`）。
 
-1. **版本号与下界原则**：
-   - 插件自身版本号推进至 `0.2.0-rc2.2`（下界元组原则），使现有声明 `^0.2.0-rc2.1` 的老宿主与消费方能够顺畅自动升级（实测 `0.2.0-rc2.2` 在 `^0.2.0-rc2.1` 范围内）；
-   - 窗口上界由 `peerDependencies` 与 README 表达；
-   - 保留点的 `rc.2.N` 命名规则（如 `0.2.1-rc.2.1`）在下一次宿主元组整体迁移至 0.2.1 基线时启用。
-2. **peerDependencies 双轨声明**：
-   - `@deepseek-ai/dsh-llm` 扩展为 `^0.2.0-rc.2 || ^0.2.1-rc.2`；
-   - `test/index.test.mjs` 中的强一致断言保证 peer 中列出的所有宿主基线版本与中英文 README 的兼容性声明逐行一一对应。
-3. **真实宿主隔离端到端复核（`_next-compat/`）**：
-   - 在独立于当前运行实例（3080 端口保持不动）的 `_next-compat/reasoning-mode` 隔离环境中，通过 `@deepseek-ai/dsh@0.2.1-rc.2` 真实宿主拉起 `test-reasoning-mode` profile（监听动态端口）：
-     - 宿主 Web 握手返回 HTTP 303 重定向并注入 cookie，验证 `globalThis["__DSH_BOOT__"]` 中 release 为 `{"version":"0.2.1-rc.2","commit":"332895e"}`；
-     - Web 端成功识别 `@zhourenke/dsh-reasoning-mode` client entry 并成功分发 31 KiB 浏览器端 bundle；
-     - 宿主端全局 `fetch` 包装（`globalThis[Symbol.for('deepseek-harness.reasoning-mode.fetch-state')]`）正常挂载；
-     - 未被 `llm/stream` 追踪的非相关请求原样放行（Test A 通过）；
-     - 在飞 `llm/stream` 活跃流结合请求头亲和性，成功将 `reasoning: { mode: "pro", summary: "concise" }` 注入 Responses 请求体（Test B 通过）；
-     - 流迭代消耗完毕后，tracker 自动注销清理，后续请求不再受影响（Test C 通过）；
-   - DSH 0.2.1-rc.2 依赖 `@deepseek-ai/schemastery@3.18.5`，插件声明的 `~3.18.4` 满足该版本；
-   - 插件核心契约与运行时代码在 0.2.1-rc.2 下完全兼容，无任何破坏性变动。
+1. **版本号**：
+   - 插件自身版本 `0.2.2-rc.5.1`；peer 单臂 `^0.2.2-rc.5`。
+   - **收窄 peer 与宿主升到 rc.5 必须是同一动作**：范围比宿主新时，bundle 会被准入闸门**静默跳过**（症状是插件完全不激活、只留一条 compatibility 警告），而不是启动失败。
+2. **真实宿主隔离端到端复核（`_rc5/`）**：用 `@deepseek-ai/dsh@0.2.2-rc.5` 在 `--port 0` 上拉起独立 profile `rc5-rm`（独立 `DSH_HOME`，3080 完全不动），桩 `openai-responses` 端点顶替上游，`_rc5/probe/e2e-rc5-reasoning-mode.mjs` 共 54 条断言全绿。逐条实测：
+   - **准入闸门**：`evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.5')` 无冲突，profile 的 `skippedBundles` 不含本插件；
+   - **宿主面**：`ctx.llm.resolveModelInfo('stub','stub-model')` 返回 `reasoning.efforts = ['low','high']`，而解析结果上**没有任何 `mode` / `summary` / `reasoningSummary` 字段**——`LlmCallControls` 至今只有 `reasoningEffort` / `temperature` / `maxTokens` / `stop`，`dsh-llm-pi-ai` 的 `profileOptions()` 也只往下传 `reasoning`（思考档位），从不传 `reasoningSummary`。**本插件补的那一半仍然是宿主没有的**，不属于重复造轮子；
+   - **改写**：真 `llm.stream()` → 真 pi-ai adapter → 真 HTTP 请求，body 里 `reasoning.mode === 'pro'`、`reasoning.summary === 'concise'`，且**原生 `effort: 'high'` 被原样保留**（`applyReasoningBody` 展开 `existing` 在前），流正常收到一个 `finish` chunk；
+   - **放行**：非流内的直发请求逐字节原样到达；流已 drain 后的同 session 请求不再带 `reasoning`；配置里没列的路由（`stub-plain`）不变；
+   - **按路由而非按模型名**：同一 model id 挂到第二个 provider `stub-b`（未配置）时不被改写——这是本插件"同 model 不同 provider 互不影响"的核心承诺；
+   - **Web 端**：`GET /?token=…` 303 → 鉴权 cookie → 200，`__DSH_BOOT__.release.version === '0.2.2-rc.5'`，boot 里 76 条 client entry 含本插件，bundle 正常分发并注册包名。
+3. **0.2.2 的破坏性变动：`dsh-client-ui-primitives` 不再是可注入的 client entry**（本轮唯一一处真断裂）：
+   - 该包**仍然发布在 npm 上**（`0.2.2-rc.5` 存在）且仍是浏览器半边 `require()` 的对象，所以 `devDependencies` 留着它；
+   - 但它**不再出现在 Web 的 client entry 列表里**：外壳把一份固定的内置模块注册表直接交给每个 bundle——`react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`zod`、`@tanstack/react-virtual`、`@deepseek-ai/dsh-client-store`、`@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`、`@deepseek-ai/dsh-client-ui-dockkit`。官方 client 包（例如 `dsh-client-ui-approval`）的 `inject` 里同样没有它；
+   - 因此把它从 `dsh.client.inject` 里删掉。留着不会报错，只会让浏览器先去解析一个 boot 里根本不存在的 entry——这正是"闸门绿但声明写错"的一类。`test/index.test.mjs` 现在有断言盯住这件事。
+4. **契约逐条核对**（均未变）：
+   - `plugins.row.config` 仍是 `kind: 'keyed'`、`scope: 'root'`、owner `PluginConfigViewProps`，键仍是 `<package>#<row id>`；`ConfigPageForm` 形状不变；
+   - `conversation.input.right` 仍是 `kind: 'list'`、`scope: 'session'`；
+   - 官方 `Menu` 原语的 props（`open` / `anchor` / `items` / `selectedIds` / `selection` / `align` / `side` / `portal` / `className` / `listClassName` / `onSelect` / `onClose`）与 `SettingsForm`、`StateDot`、`IconChevronDownOutlineRegular` 四个导出在 0.2.2-rc.5 的外壳里全部仍在；
+   - `schemastery` 从 `3.18.4` 升到 `3.19.0`（宿主同版），`cordis` 从 `4.0.4` 升到 `4.1.0`；
+   - `llm/stream` waterfall 签名 `(options, next)` 不变；pi-ai 从 `0.87.1` 换到 `1.5.2`，但"调用时取全局 `fetch`"这条前提依旧成立（`client.responses.create` 走 SDK 的 `fetch` 选项，`profileOptions()` 不传 `fetch`），全局 `fetch` 包装照样生效。
 
 ## 许可证
 

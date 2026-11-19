@@ -71,8 +71,7 @@ The configuration lives in the **web profile's patch layer**, `<harness home>/pr
 
 ## Compatibility
 
-Tested with v0.2.0-rc.2 (September 2026).
-Tested with v0.2.1-rc.2 (October 2026).
+Tested with v0.2.2-rc.5 (November 2026).
 
 ## License
 

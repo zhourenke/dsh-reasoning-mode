@@ -771,6 +771,31 @@ test('survives a malformed or hostile request instead of failing the caller', { 
 const packageRoot = new URL('..', import.meta.url)
 const manifest = JSON.parse(readFileSync(new URL('package.json', packageRoot), 'utf8'))
 
+test('the client injection list names only packages the web boot actually serves', () => {
+  // `dsh.client.inject` is a load-order list of *client entries*. It is not a
+  // dependency declaration: an entry the boot payload does not carry can never
+  // be resolved by the browser, so listing one takes the bundle down with it.
+  //
+  // `@deepseek-ai/dsh-client-ui-primitives` is published on npm and still the
+  // package this bundle `require()`s, but from 0.2.2 on the shell hands it to
+  // every bundle through its built-in module registry and the web boot carries
+  // no such entry — the official client packages stopped injecting it for the
+  // same reason. Its devDependency therefore stays while its injection goes.
+  const injected = manifest.dsh?.client?.inject ?? []
+  assert.ok(injected.length > 0, 'the bundle still declares the entries it needs')
+  assert.ok(
+    !injected.includes('@deepseek-ai/dsh-client-ui-primitives'),
+    'primitives is a shell built-in, not a client entry',
+  )
+  for (const dependency of injected) {
+    assert.match(dependency, /^@deepseek-ai\//, `${dependency} is a host package`)
+  }
+  // The shell-provided modules a bundle may require without declaring anything.
+  for (const builtin of ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives']) {
+    assert.ok(!injected.includes(builtin), `${builtin} comes from the shell, not from an injection`)
+  }
+})
+
 test('the display metadata the plugin list shows is declared and valid', () => {
   // `locale/*.json` resolves through the package `exports` map, and neither the
   // dictionaries nor the icon belong to the auto-included set.
@@ -801,8 +826,8 @@ test('the display metadata the plugin list shows is declared and valid', () => {
   }
 })
 
-test('peerDependencies and README compatibility declarations stay in step across host baselines', () => {
-  // All @deepseek-ai/dsh-* peerDependencies must declare the exact same range of host baselines
+test('peerDependencies and README compatibility declarations stay in step', () => {
+  // All @deepseek-ai/dsh-* peerDependencies must declare the exact same host range
   const dshPeers = Object.entries(manifest.peerDependencies ?? {})
     .filter(([pkgName]) => pkgName.startsWith('@deepseek-ai/dsh-'))
   assert.ok(dshPeers.length > 0, 'must declare dsh-* peerDependencies')
@@ -812,13 +837,13 @@ test('peerDependencies and README compatibility declarations stay in step across
     assert.equal(range, expectedRange, `${pkgName} peer range must match other dsh-* packages`)
   }
 
-  // Extract version tokens from the peer range, e.g. "^0.2.0-rc.2 || ^0.2.1-rc.2" -> ['0.2.0-rc.2', '0.2.1-rc.2']
+  // Extract version tokens from the peer range, e.g. "^0.2.2-rc.5" -> ['0.2.2-rc.5']
   const peerVersions = expectedRange
     .split('||')
     .map((arm) => arm.trim().replace(/^\^/, ''))
     .sort()
 
-  // Verify README.md compatibility section has exactly one matching line per peer baseline
+  // Verify README.md compatibility section has exactly one matching line per declared baseline
   const readmeZh = readFileSync(new URL('README.md', packageRoot), 'utf8')
   const zhMatches = [...readmeZh.matchAll(/在 v([0-9a-zA-Z.-]+)（\d{4}-\d{2}）下测试通过。/g)]
     .map((m) => m[1])
